@@ -70,12 +70,14 @@ pub trait Model {
         ctx: &ModelCtx,
     ) -> Result<Self::Value, LangError>;
 
-    /// Attempt to rewrite `source` into `target` under the given witness.
+    /// Attempt to rewrite `source` into `target` under the given witness,
+    /// using the provided `incoming` value.
     fn rewrite(
         &self,
         source: &Term,
         target: &Term,
         witness: &RewriteWitness,
+        incoming: &Self::Value,
         ctx: &ModelCtx,
     ) -> Result<RewriteResult, LangError>;
 }
