@@ -59,6 +59,18 @@ pub trait LanguageView {
     /// A handler value is a tagged record
     /// `{"__tag__": "Handler", "grades": [...], "impls": {...}}`.
     fn handler_for_grade(&self, grade: &str) -> Option<serde_json::Value>;
+
+    /// The declared law `source ~> target` for `name`, if any.
+    ///
+    /// A law value is an object with `source` and `target` fields that
+    /// serialize [`Term`] arrows.
+    fn law(&self, name: &str) -> Option<serde_json::Value>;
+
+    /// The declared rewrite rule `source ~> target` for `name`, if any.
+    ///
+    /// A rewrite value is an object with `source` and `target` fields that
+    /// serialize [`Term`] arrows.
+    fn rewrite_rule(&self, name: &str) -> Option<serde_json::Value>;
 }
 
 /// A minimal, object-safe view over an AST arena.

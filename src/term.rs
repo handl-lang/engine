@@ -196,8 +196,8 @@ pub enum ArrSource {
 /// A witness recording why a `Term::Rewrite` is sound.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum RewriteWitness {
-    /// Rewriting by a named rule from a transform pass.
-    Rule { name: String },
+    /// A declared law or rewrite rule by name from `Language` data.
+    Named(String),
     /// A computed rewrite step (e.g. normalization).
     Compute,
     /// A hint produced during handler elimination.
