@@ -5,7 +5,7 @@
 pub mod term;
 
 pub use term::{
-    ArrSource, RewriteWitness, Term, eliminate_all_handlers, eliminate_handler_in_scheme,
+    ArrSource, RewriteWitness, Side, Term, eliminate_all_handlers, eliminate_handler_in_scheme,
 };
 
 /// A reference to a node in an AST arena.

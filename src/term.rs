@@ -23,6 +23,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// A side for a `Whisker` cell attachment.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Side {
+    /// The left side of a whisker.
+    Left,
+    /// The right side of a whisker.
+    Right,
+}
+
 /// The arrow-calculus kernel: six primitives as data (ADR-0052).
 ///
 /// Mirrors the ADR-0052 §"Kernel representation" enum. Arrows are
@@ -188,6 +197,100 @@ pub enum Term {
         path: Box<Term>,
         /// The value to transport.
         value: Box<Term>,
+    },
+
+    /// Identity of a cell in a frontier context.
+    CellId {
+        /// The arrow identifying the cell.
+        arrow: Box<Term>,
+    },
+
+    /// Vertical cell composition.
+    CellCompV {
+        /// The first arrow.
+        first: Box<Term>,
+        /// The second arrow.
+        second: Box<Term>,
+    },
+
+    /// Horizontal cell composition.
+    CellCompH {
+        /// The left arrow.
+        left: Box<Term>,
+        /// The right arrow.
+        right: Box<Term>,
+    },
+
+    /// A whisker attaching an arrow to a cell on a side.
+    Whisker {
+        /// The side of attachment.
+        side: Side,
+        /// The arrow to attach.
+        arrow: Box<Term>,
+        /// The cell to attach to.
+        cell: Box<Term>,
+    },
+
+    /// Univalence from an equivalence.
+    Univalence {
+        /// The equivalence arrow.
+        equiv: Box<Term>,
+    },
+
+    /// Glue a family along a path.
+    Glue {
+        /// The family.
+        family: Box<Term>,
+        /// The path.
+        path: Box<Term>,
+    },
+
+    /// Fibrant type former.
+    Fibrant {
+        /// The base.
+        base: Box<Term>,
+        /// The family.
+        family: Box<Term>,
+    },
+
+    /// J-elimination.
+    JElim {
+        /// The path.
+        path: Box<Term>,
+        /// The motive.
+        motive: Box<Term>,
+        /// The base.
+        base: Box<Term>,
+    },
+
+    /// Witness carrying grade metadata and a proof.
+    Witness {
+        /// The grade metadata.
+        grade: Box<Term>,
+        /// The proof.
+        proof: Box<Term>,
+    },
+
+    /// Refine a sort by a predicate.
+    Refine {
+        /// The sort.
+        sort: Box<Term>,
+        /// The predicate.
+        predicate: Box<Term>,
+    },
+
+    /// Cobind over a grade and body.
+    Cobind {
+        /// The grade.
+        grade: Box<Term>,
+        /// The body.
+        body: Box<Term>,
+    },
+
+    /// A cell box.
+    Cobox {
+        /// The cell.
+        cell: Box<Term>,
     },
 }
 
@@ -488,6 +591,53 @@ impl Term {
                 path: Box::new(path.eliminate_handlers()),
                 value: Box::new(value.eliminate_handlers()),
             },
+            Term::CellId { arrow } => Term::CellId {
+                arrow: Box::new(arrow.eliminate_handlers()),
+            },
+            Term::CellCompV { first, second } => Term::CellCompV {
+                first: Box::new(first.eliminate_handlers()),
+                second: Box::new(second.eliminate_handlers()),
+            },
+            Term::CellCompH { left, right } => Term::CellCompH {
+                left: Box::new(left.eliminate_handlers()),
+                right: Box::new(right.eliminate_handlers()),
+            },
+            Term::Whisker { side, arrow, cell } => Term::Whisker {
+                side: side.clone(),
+                arrow: Box::new(arrow.eliminate_handlers()),
+                cell: Box::new(cell.eliminate_handlers()),
+            },
+            Term::Univalence { equiv } => Term::Univalence {
+                equiv: Box::new(equiv.eliminate_handlers()),
+            },
+            Term::Glue { family, path } => Term::Glue {
+                family: Box::new(family.eliminate_handlers()),
+                path: Box::new(path.eliminate_handlers()),
+            },
+            Term::Fibrant { base, family } => Term::Fibrant {
+                base: Box::new(base.eliminate_handlers()),
+                family: Box::new(family.eliminate_handlers()),
+            },
+            Term::JElim { path, motive, base } => Term::JElim {
+                path: Box::new(path.eliminate_handlers()),
+                motive: Box::new(motive.eliminate_handlers()),
+                base: Box::new(base.eliminate_handlers()),
+            },
+            Term::Witness { grade, proof } => Term::Witness {
+                grade: Box::new(grade.eliminate_handlers()),
+                proof: Box::new(proof.eliminate_handlers()),
+            },
+            Term::Refine { sort, predicate } => Term::Refine {
+                sort: Box::new(sort.eliminate_handlers()),
+                predicate: Box::new(predicate.eliminate_handlers()),
+            },
+            Term::Cobind { grade, body } => Term::Cobind {
+                grade: Box::new(grade.eliminate_handlers()),
+                body: Box::new(body.eliminate_handlers()),
+            },
+            Term::Cobox { cell } => Term::Cobox {
+                cell: Box::new(cell.eliminate_handlers()),
+            },
         }
     }
 }
@@ -613,6 +763,53 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
         Term::Transport { path, value } => Term::Transport {
             path: Box::new(substitute_capability(path, target, impl_)),
             value: Box::new(substitute_capability(value, target, impl_)),
+        },
+        Term::CellId { arrow } => Term::CellId {
+            arrow: Box::new(substitute_capability(arrow, target, impl_)),
+        },
+        Term::CellCompV { first, second } => Term::CellCompV {
+            first: Box::new(substitute_capability(first, target, impl_)),
+            second: Box::new(substitute_capability(second, target, impl_)),
+        },
+        Term::CellCompH { left, right } => Term::CellCompH {
+            left: Box::new(substitute_capability(left, target, impl_)),
+            right: Box::new(substitute_capability(right, target, impl_)),
+        },
+        Term::Whisker { side, arrow, cell } => Term::Whisker {
+            side: side.clone(),
+            arrow: Box::new(substitute_capability(arrow, target, impl_)),
+            cell: Box::new(substitute_capability(cell, target, impl_)),
+        },
+        Term::Univalence { equiv } => Term::Univalence {
+            equiv: Box::new(substitute_capability(equiv, target, impl_)),
+        },
+        Term::Glue { family, path } => Term::Glue {
+            family: Box::new(substitute_capability(family, target, impl_)),
+            path: Box::new(substitute_capability(path, target, impl_)),
+        },
+        Term::Fibrant { base, family } => Term::Fibrant {
+            base: Box::new(substitute_capability(base, target, impl_)),
+            family: Box::new(substitute_capability(family, target, impl_)),
+        },
+        Term::JElim { path, motive, base } => Term::JElim {
+            path: Box::new(substitute_capability(path, target, impl_)),
+            motive: Box::new(substitute_capability(motive, target, impl_)),
+            base: Box::new(substitute_capability(base, target, impl_)),
+        },
+        Term::Witness { grade, proof } => Term::Witness {
+            grade: Box::new(substitute_capability(grade, target, impl_)),
+            proof: Box::new(substitute_capability(proof, target, impl_)),
+        },
+        Term::Refine { sort, predicate } => Term::Refine {
+            sort: Box::new(substitute_capability(sort, target, impl_)),
+            predicate: Box::new(substitute_capability(predicate, target, impl_)),
+        },
+        Term::Cobind { grade, body } => Term::Cobind {
+            grade: Box::new(substitute_capability(grade, target, impl_)),
+            body: Box::new(substitute_capability(body, target, impl_)),
+        },
+        Term::Cobox { cell } => Term::Cobox {
+            cell: Box::new(substitute_capability(cell, target, impl_)),
         },
     }
 }
