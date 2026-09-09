@@ -98,6 +98,24 @@ pub struct ModelCtx<'a> {
     pub current_node: &'a AstNode,
     /// A reference to the current node.
     pub node_ref: AstRef,
+    /// Runtime handler stack for `Term::Handle` / `Term::Op` dynamic
+    /// dispatch. `Term::Handle` pushes its evaluated implementation here
+    /// for the duration of its body; `Term::Op` dispatch searches the
+    /// stack innermost-last for a `{"__tag__": "Handler", "impls": {...}}`
+    /// value providing the op name.
+    pub handler_stack: Vec<serde_json::Value>,
+}
+
+impl ModelCtx<'_> {
+    /// Push a handler value onto the handler stack.
+    pub fn push_handler(&mut self, value: serde_json::Value) {
+        self.handler_stack.push(value);
+    }
+
+    /// Pop the innermost handler value from the handler stack, if any.
+    pub fn pop_handler(&mut self) -> Option<serde_json::Value> {
+        self.handler_stack.pop()
+    }
 }
 
 /// A pluggable model for interpreting and rewriting `Term` schemes.
@@ -110,7 +128,7 @@ pub trait Model {
         &self,
         term: &Term,
         incoming: Self::Value,
-        ctx: &ModelCtx,
+        ctx: &mut ModelCtx,
     ) -> Result<Self::Value, LangError>;
 
     /// Attempt to rewrite `source` into `target` under the given witness,
@@ -121,6 +139,6 @@ pub trait Model {
         target: &Term,
         witness: &RewriteWitness,
         incoming: &Self::Value,
-        ctx: &ModelCtx,
+        ctx: &mut ModelCtx,
     ) -> Result<RewriteResult, LangError>;
 }
