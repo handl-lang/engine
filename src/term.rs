@@ -31,24 +31,21 @@ use serde_json::Value;
 /// new arrow description; none *execute*.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Term {
-    /// `arr f` — lift a named pure function over the arrow's input.
-    ///
-    /// Sub-schemes feed the function's arguments. Replaces the former v1
-    /// `Lit`, `Var`, `Child`, `Prim`, `Foreign`. `arr` describes a pure
-    /// step; interpretation is the handler's job. The `lit` payload
-    /// carries an inline literal operand for ops like `const` (the
-    /// value), `proj_env` (the name string), and `proj_child` (the index
-    /// number); it is `None` for ordinary pure/foreign ops whose operands
-    /// are sub-schemes.
+    /// Pure constant arrow (Sanada's `arr`).
     Arr {
-        /// The operator name (e.g. `"add"`, `"const"`, `"proj_env"`).
-        op: String,
+        /// The constant value.
+        value: Value,
+    },
+    /// Named graded operation (Sanada's `op`).
+    Op {
+        /// The operator name (e.g. `"add"`, `"proj_env"`).
+        name: String,
         /// The argument sub-schemes feeding the op.
         args: Vec<Term>,
         /// Whether this is a native pure op or a foreign (host) call.
         source: ArrSource,
         /// An inline literal operand for ops that take a literal value
-        /// rather than a sub-scheme (`const`, `proj_env`, `proj_child`).
+        /// rather than a sub-scheme (`proj_env`, `proj_child`).
         /// `None` for ordinary ops. Literal operands ride here so `args`
         /// stays a pure list of sub-schemes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -115,6 +112,29 @@ pub enum Term {
         args: Vec<Term>,
     },
 
+    /// Bounded iteration (`iter` / `for` fuel loop).
+    ///
+    /// `fuel` evaluates to a non-negative integer; while it is positive,
+    /// `predicate` is run on the state, and if it succeeds, `step` is
+    /// applied to the state and `fuel` is decremented. `initial` is the
+    /// starting state.
+    Iter {
+        /// The remaining iteration budget.
+        fuel: Box<Term>,
+        /// The predicate arrow `state -> bool`.
+        predicate: Box<Term>,
+        /// The step arrow `state -> state`.
+        step: Box<Term>,
+        /// The initial state.
+        initial: Box<Term>,
+    },
+
+    /// Child projection by named role (ADR-0081).
+    Child {
+        /// The child role to project from the current AST node.
+        role: String,
+    },
+
     /// `handle body with target = impl_` (ADR-0076): declares that `target`
     /// is a managed capability, with `body` as the handler body and `impl_`
     /// as the handler implementation. Eliminated at compile time by
@@ -145,14 +165,14 @@ pub enum Term {
     },
 }
 
-/// Whether an `Arr` op is a native pure function or a foreign host call.
+/// Whether an `Op` is a native pure function or a foreign host call.
 ///
 /// `Foreign(name)` keeps the capability boundary structural: the
 /// typechecker and load-time capability audit match on `source`, not on
 /// a string prefix.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ArrSource {
-    /// A native pure op (`add`, `proj_env`, `const`, `id`, …).
+    /// A native pure op (`add`, `proj_env`, `id`, …).
     Native,
     /// A foreign (host) function call — capability-tracked. The `name` is
     /// the registered host-function name (e.g. `"fs.read"`).
@@ -187,66 +207,119 @@ pub enum RewriteWitness {
 }
 
 impl Term {
-    /// Convenience constructor for a native `arr` with no literal payload.
-    pub fn arr_native(op: impl Into<String>, args: Vec<Term>) -> Self {
+    /// Convenience constructor for a pure constant arrow.
+    pub fn const_value(value: impl Into<Value>) -> Self {
         Term::Arr {
-            op: op.into(),
+            value: value.into(),
+        }
+    }
+
+    /// Convenience constructor for a native `op` with no literal payload.
+    pub fn op_native(name: impl Into<String>, args: Vec<Term>) -> Self {
+        Term::Op {
+            name: name.into(),
             args,
             source: ArrSource::Native,
             lit: None,
         }
     }
 
-    /// Convenience constructor for a foreign `arr`.
+    /// Backward-compatible alias for [`Term::op_native`].
+    pub fn arr_native(op: impl Into<String>, args: Vec<Term>) -> Self {
+        let op = op.into();
+        if op == "const" && args.is_empty() {
+            Term::const_value(Value::Null)
+        } else {
+            Term::op_native(op, args)
+        }
+    }
+
+    /// Convenience constructor for a foreign `op`.
     ///
     /// The host function `name` is used both as the op and as the
     /// `Foreign(name)` source, matching ADR-0052's lowering of
     /// `Foreign { name, args }`.
-    pub fn arr_foreign(name: impl Into<String>, args: Vec<Term>) -> Self {
+    pub fn op_foreign(name: impl Into<String>, args: Vec<Term>) -> Self {
         let name = name.into();
-        Term::Arr {
-            op: name.clone(),
+        Term::Op {
+            name: name.clone(),
             args,
             source: ArrSource::Foreign(name),
             lit: None,
         }
     }
 
-    /// Convenience constructor for a native `arr` carrying a literal
-    /// payload (e.g. `const`, `proj_env`, `proj_child`).
-    pub fn arr_native_lit(op: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
-        Term::Arr {
-            op: op.into(),
+    /// Backward-compatible alias for [`Term::op_foreign`].
+    pub fn arr_foreign(name: impl Into<String>, args: Vec<Term>) -> Self {
+        Term::op_foreign(name, args)
+    }
+
+    /// Convenience constructor for a native `op` carrying a literal
+    /// payload (e.g. `proj_env`, `proj_child`).
+    pub fn op_native_lit(
+        name: impl Into<String>,
+        args: Vec<Term>,
+        lit: impl Into<Value>,
+    ) -> Self {
+        Term::Op {
+            name: name.into(),
             args,
             source: ArrSource::Native,
             lit: Some(lit.into()),
         }
     }
 
-    /// Convenience constructor for a typecheck judgment `arr` (ADR-0054
+    /// Backward-compatible alias for [`Term::op_native_lit`].
+    ///
+    /// For the `const` op it now produces [`Term::Arr`] via
+    /// [`Term::const_value`], matching the ADR-0098/0100 calculus.
+    pub fn arr_native_lit(op: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
+        let op = op.into();
+        if op == "const" && args.is_empty() {
+            Term::const_value(lit)
+        } else {
+            Term::op_native_lit(op, args, lit)
+        }
+    }
+
+    /// Convenience constructor for a typecheck judgment `op` (ADR-0054
     /// §1, §2) with no literal payload.
-    pub fn arr_judgment(op: impl Into<String>, args: Vec<Term>) -> Self {
-        Term::Arr {
-            op: op.into(),
+    pub fn op_judgment(name: impl Into<String>, args: Vec<Term>) -> Self {
+        Term::Op {
+            name: name.into(),
             args,
             source: ArrSource::Judgment,
             lit: None,
         }
     }
 
-    /// Convenience constructor for a typecheck judgment `arr` (ADR-0054
+    /// Backward-compatible alias for [`Term::op_judgment`].
+    pub fn arr_judgment(op: impl Into<String>, args: Vec<Term>) -> Self {
+        Term::op_judgment(op, args)
+    }
+
+    /// Convenience constructor for a typecheck judgment `op` (ADR-0054
     /// §1, §2) carrying a literal payload.
+    pub fn op_judgment_lit(
+        name: impl Into<String>,
+        args: Vec<Term>,
+        lit: impl Into<Value>,
+    ) -> Self {
+        Term::Op {
+            name: name.into(),
+            args,
+            source: ArrSource::Judgment,
+            lit: Some(lit.into()),
+        }
+    }
+
+    /// Backward-compatible alias for [`Term::op_judgment_lit`].
     pub fn arr_judgment_lit(
         op: impl Into<String>,
         args: Vec<Term>,
         lit: impl Into<Value>,
     ) -> Self {
-        Term::Arr {
-            op: op.into(),
-            args,
-            source: ArrSource::Judgment,
-            lit: Some(lit.into()),
-        }
+        Term::op_judgment_lit(op, args, lit)
     }
 
     /// Convenience constructor for `>>>` (sequential composition).
@@ -310,20 +383,37 @@ impl Term {
     /// 3. Return the substituted body.
     pub fn eliminate_handlers(&self) -> Term {
         match self {
-            Term::Arr {
-                op,
+            Term::Arr { value } => Term::Arr {
+                value: value.clone(),
+            },
+            Term::Op {
+                name,
                 args,
                 source,
                 lit,
             } => {
                 let new_args: Vec<Term> = args.iter().map(|a| a.eliminate_handlers()).collect();
-                Term::Arr {
-                    op: op.clone(),
+                Term::Op {
+                    name: name.clone(),
                     args: new_args,
                     source: source.clone(),
                     lit: lit.clone(),
                 }
             }
+            Term::Iter {
+                fuel,
+                predicate,
+                step,
+                initial,
+            } => Term::Iter {
+                fuel: Box::new(fuel.eliminate_handlers()),
+                predicate: Box::new(predicate.eliminate_handlers()),
+                step: Box::new(step.eliminate_handlers()),
+                initial: Box::new(initial.eliminate_handlers()),
+            },
+            Term::Child { role } => Term::Child {
+                role: role.clone(),
+            },
             Term::Seq { fst, snd } => Term::Seq {
                 fst: Box::new(fst.eliminate_handlers()),
                 snd: Box::new(snd.eliminate_handlers()),
@@ -369,27 +459,30 @@ impl Term {
 
 /// Substitute bare `arr(target)` references in `scheme` with `impl_`.
 ///
-/// A bare `arr(target)` reference is an `Arr` node whose `op` equals `target`,
+/// A bare `arr(target)` reference is an `Op` node whose `name` equals `target`,
 /// with no sub-scheme arguments and no literal payload. Such a reference may
 /// carry either a [`ArrSource::Native`] source (the common case, as produced
-/// by `arr_native`) or a [`ArrSource::Foreign`] source naming `target`. Both
+/// by `op_native`) or a [`ArrSource::Foreign`] source naming `target`. Both
 /// are recognized and replaced by `impl_`. All other nodes are recursed into
 /// structurally.
 fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
     match scheme {
-        Term::Arr {
-            op,
+        Term::Arr { value } => Term::Arr {
+            value: value.clone(),
+        },
+        Term::Op {
+            name,
             args,
             source,
             lit,
         } => {
             // Check if this is a bare `arr(target)` reference:
-            // op == target, no args, no lit. The source may be Native (the
-            // common case from `arr_native`) or Foreign(target).
-            if op == target && args.is_empty() && lit.is_none() {
+            // name == target, no args, no lit. The source may be Native (the
+            // common case from `op_native`) or Foreign(target).
+            if name == target && args.is_empty() && lit.is_none() {
                 match source {
                     ArrSource::Native => return impl_.clone(),
-                    ArrSource::Foreign(name) if name == target => return impl_.clone(),
+                    ArrSource::Foreign(n) if n == target => return impl_.clone(),
                     _ => {}
                 }
             }
@@ -398,8 +491,8 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
                 .iter()
                 .map(|a| substitute_capability(a, target, impl_))
                 .collect();
-            Term::Arr {
-                op: op.clone(),
+            Term::Op {
+                name: name.clone(),
                 args: new_args,
                 source: source.clone(),
                 lit: lit.clone(),
@@ -429,6 +522,20 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
                 args: new_args,
             }
         }
+        Term::Iter {
+            fuel,
+            predicate,
+            step,
+            initial,
+        } => Term::Iter {
+            fuel: Box::new(substitute_capability(fuel, target, impl_)),
+            predicate: Box::new(substitute_capability(predicate, target, impl_)),
+            step: Box::new(substitute_capability(step, target, impl_)),
+            initial: Box::new(substitute_capability(initial, target, impl_)),
+        },
+        Term::Child { role } => Term::Child {
+            role: role.clone(),
+        },
         Term::Handle {
             body,
             target: t,
@@ -475,24 +582,24 @@ mod tests {
     }
 
     #[test]
-    fn arr_native_constructs_and_roundtrips() {
-        let s = Term::arr_native("add", vec![Term::arr_native_lit("proj_child", vec![], 0)]);
+    fn op_native_constructs_and_roundtrips() {
+        let s = Term::op_native("add", vec![Term::op_native_lit("proj_child", vec![], 0)]);
         assert_eq!(s, roundtrip(&s));
         let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"Arr\""));
+        assert!(j.contains("\"Op\""));
         assert!(j.contains("\"Native\""));
-        // The outer arr has no lit; the inner proj_child does.
+        // The outer op has no lit; the inner proj_child does.
         match s {
-            Term::Arr { lit, .. } => assert_eq!(lit, None),
-            other => panic!("expected Arr, got {other:?}"),
+            Term::Op { lit, .. } => assert_eq!(lit, None),
+            other => panic!("expected Op, got {other:?}"),
         }
     }
 
     #[test]
-    fn arr_foreign_constructs_and_roundtrips() {
-        let s = Term::arr_foreign(
+    fn op_foreign_constructs_and_roundtrips() {
+        let s = Term::op_foreign(
             "fs.read",
-            vec![Term::arr_native_lit("proj_child", vec![], 0)],
+            vec![Term::op_native_lit("proj_child", vec![], 0)],
         );
         assert_eq!(s, roundtrip(&s));
         let j = serde_json::to_string(&s).unwrap();
@@ -501,18 +608,19 @@ mod tests {
     }
 
     #[test]
-    fn arr_lit_present_roundtrips() {
-        let s = Term::arr_native_lit("const", vec![], Value::from(42));
+    fn const_value_roundtrips() {
+        let s = Term::const_value(Value::from(42));
         assert_eq!(s, roundtrip(&s));
         let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"lit\""));
+        assert!(j.contains("\"Arr\""));
         assert!(j.contains("42"));
     }
 
     #[test]
-    fn arr_lit_absent_omitted() {
-        let s = Term::arr_native("id", vec![]);
+    fn op_lit_absent_omitted() {
+        let s = Term::op_native("id", vec![]);
         let j = serde_json::to_string(&s).unwrap();
+        assert!(j.contains("\"Op\""));
         assert!(!j.contains("\"lit\""));
         assert_eq!(s, roundtrip(&s));
     }
