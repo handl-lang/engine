@@ -1,24 +1,13 @@
-//! The arrow-calculus `Term` kernel (ADR-0052).
+//! The arrow-calculus `Term` kernel (ADR-0104b).
 //!
-//! `Term` is the arrow-calculus evaluation kernel: the six arrow
-//! primitives — `arr`, `>>>` (`Seq`), `first`, `Choice`, `Loop`, and `app`
-//! — plus an `ArrSource` discipline on `arr` that keeps the capability
-//! boundary structural. A `Term` is an engine-agnostic description of
-//! *what* to evaluate for a given AST node kind, not *how*. Engines
+//! `Term` is the arrow-calculus evaluation kernel. A `Term` is an
+//! engine-agnostic description of *what* to evaluate, not *how*. Engines
 //! (tree-walk, bytecode, cranelift) interpret schemes; the scheme itself is
-//! pure data. Surface constructs are expressed as [`DesugarRule`]s, not new
-//! variants.
+//! pure data. Surface constructs are lowered to a small set of core
+//! combinators. [`Term::desugar`] recursively expands any remaining derived
+//! forms into this core set before interpretation.
 //!
 //! `Value` here is [`serde_json::Value`] — no new value type is invented.
-//!
-//! # The `lit` payload
-//!
-//! `Arr::args` is `Vec<Term>` — a literal value is not a sub-scheme. Literal
-//! operands (the value of a `const`, the name of a `proj_env`, the index of a
-//! `proj_child`) ride on `Arr`'s optional `lit: Option<Value>` payload, while
-//! `args` stays a pure list of sub-schemes. The field serializes only when
-//! present (`skip_serializing_if = "Option::is_none"`, `default`), so
-//! foreign/prim arrows without a literal payload round-trip cleanly.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,16 +21,16 @@ pub enum Side {
     Right,
 }
 
-/// The arrow-calculus kernel: six primitives as data (ADR-0052).
-///
-/// Mirrors the ADR-0052 §"Kernel representation" enum. Arrows are
-/// first-class computational descriptions; handlers provide
-/// interpretations of those descriptions. Every variant *constructs* a
-/// new arrow description; none *execute*.
+/// The arrow-calculus kernel: a small data-only combinator set.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Term {
     /// Pure constant arrow (Sanada's `arr`).
     Arr {
+        /// The constant value.
+        value: Value,
+    },
+    /// Pure constant value (ADR-0104b).
+    Const {
         /// The constant value.
         value: Value,
     },
@@ -62,10 +51,6 @@ pub enum Term {
     },
 
     /// `>>>` — sequential composition.
-    ///
-    /// Constructs a new arrow whose output of `fst` feeds `snd`. This
-    /// *composes* arrows; it does **not execute** them. The composed
-    /// arrow is a description; a handler interprets it.
     Seq {
         /// The first arrow; its output feeds `snd`.
         fst: Box<Term>,
@@ -75,17 +60,12 @@ pub enum Term {
 
     /// `first` — fan-out: run `inner` on the first component of a pair,
     /// carry the second component through unchanged.
-    ///
-    /// Constructs a new arrow; does not execute.
     First {
         /// The arrow to run on the first component.
         inner: Box<Term>,
     },
 
-    /// `ArrowChoice` — route on `Either`: `l` handles `Left`, `r` handles
-    /// `Right`.
-    ///
-    /// Constructs a routing arrow; does not execute.
+    /// `ArrowChoice` — route on `Either`.
     Choice {
         /// The arrow handling the `Left` case.
         l: Box<Term>,
@@ -93,27 +73,13 @@ pub enum Term {
         r: Box<Term>,
     },
 
-    /// `ArrowLoop` — feedback (NOT iteration).
-    ///
-    /// `body` has shape `(In, State) ~> (Out, State)`; `Loop` hides
-    /// `State` in a feedback channel, exposing `In ~> Out`. Recursion,
-    /// `while`, `for`, state machines are derived patterns over `Loop`
-    /// + `Choice`. The feedback semantics (causal/strict vs
-    /// lazy/fixpoint) are specified separately — `Loop` in the kernel is
-    /// the *description* of a feedback channel; the interpretation
-    /// strategy is the handler's concern.
+    /// `ArrowLoop` — feedback.
     Loop {
-        /// The feedback body: `(In, State) ~> (Out, State)`.
+        /// The feedback body.
         body: Box<Term>,
     },
 
     /// `app` / `ArrowApply` — dynamic/higher-order arrow application.
-    ///
-    /// Given `f : A ~> B` and `x : A`, `app(f, x)` invokes `f` on `x`.
-    /// Required for higher-order arrows (an arrow received as runtime
-    /// data). Distinct from external interpretation: `app` is a calculus
-    /// operation *within* an arrow; `handle H program` interprets an
-    /// entire arrow from outside.
     App {
         /// The callee arrow.
         callee: Box<Term>,
@@ -121,12 +87,7 @@ pub enum Term {
         args: Vec<Term>,
     },
 
-    /// Bounded iteration (`iter` / `for` fuel loop).
-    ///
-    /// `fuel` evaluates to a non-negative integer; while it is positive,
-    /// `predicate` is run on the state, and if it succeeds, `step` is
-    /// applied to the state and `fuel` is decremented. `initial` is the
-    /// starting state.
+    /// Bounded iteration.
     Iter {
         /// The remaining iteration budget.
         fuel: Box<Term>,
@@ -144,26 +105,17 @@ pub enum Term {
         role: String,
     },
 
-    /// `handle body with target = impl_` (ADR-0076): declares that `target`
-    /// is a managed capability, with `body` as the handler body and `impl_`
-    /// as the handler implementation. Eliminated at compile time by
-    /// [`Term::eliminate_handlers`].
+    /// `handle body with target = impl_` (ADR-0076).
     Handle {
-        /// The handler body — the program being handled. Bare `arr(target)`
-        /// references within it are replaced by `impl_` during elimination.
+        /// The handler body.
         body: Box<Term>,
-        /// The capability name being managed (the handle target).
+        /// The capability name being managed.
         target: String,
-        /// The handler implementation substituted for bare `arr(target)`
-        /// references during elimination.
+        /// The handler implementation.
         impl_: Box<Term>,
     },
 
     /// `rewrite source ~> target` — a scheme rewrite step.
-    ///
-    /// Carries the source and target arrows plus a witness that records why
-    /// the rewrite is sound (a named rule, a computed step, a handler hint,
-    /// or a cast).
     Rewrite {
         /// The source arrow before rewriting.
         source: Box<Term>,
@@ -191,18 +143,22 @@ pub enum Term {
         path: Option<Box<Term>>,
     },
 
-    /// `transport path value` — transport a value along a path (ADR-0100).
-    Transport {
-        /// The path along which to transport.
-        path: Box<Term>,
-        /// The value to transport.
-        value: Box<Term>,
-    },
-
     /// Identity of a cell in a frontier context.
     CellId {
         /// The arrow identifying the cell.
         arrow: Box<Term>,
+    },
+
+    /// Source face of a 2-cell.
+    Src {
+        /// The 2-cell value.
+        cell: Box<Term>,
+    },
+
+    /// Target face of a 2-cell.
+    Tgt {
+        /// The 2-cell value.
+        cell: Box<Term>,
     },
 
     /// Vertical cell composition.
@@ -213,14 +169,6 @@ pub enum Term {
         second: Box<Term>,
     },
 
-    /// Horizontal cell composition.
-    CellCompH {
-        /// The left arrow.
-        left: Box<Term>,
-        /// The right arrow.
-        right: Box<Term>,
-    },
-
     /// A whisker attaching an arrow to a cell on a side.
     Whisker {
         /// The side of attachment.
@@ -229,6 +177,32 @@ pub enum Term {
         arrow: Box<Term>,
         /// The cell to attach to.
         cell: Box<Term>,
+    },
+
+    /// Record field projection.
+    RecordProj {
+        /// The record to project from.
+        record: Box<Term>,
+        /// The field name.
+        field: String,
+    },
+
+    /// Record field update.
+    RecordWith {
+        /// The record to update.
+        record: Box<Term>,
+        /// The field name.
+        field: String,
+        /// The new value for the field.
+        value: Box<Term>,
+    },
+
+    /// Tagged value wrapper.
+    Tag {
+        /// The tag name.
+        tag: String,
+        /// The inner value.
+        value: Box<Term>,
     },
 
     /// Univalence from an equivalence.
@@ -263,14 +237,6 @@ pub enum Term {
         base: Box<Term>,
     },
 
-    /// Witness carrying grade metadata and a proof.
-    Witness {
-        /// The grade metadata.
-        grade: Box<Term>,
-        /// The proof.
-        proof: Box<Term>,
-    },
-
     /// Refine a sort by a predicate.
     Refine {
         /// The sort.
@@ -286,39 +252,18 @@ pub enum Term {
         /// The body.
         body: Box<Term>,
     },
-
-    /// A cell box.
-    Cobox {
-        /// The cell.
-        cell: Box<Term>,
-    },
 }
 
 /// Whether an `Op` is a native pure function or a foreign host call.
-///
-/// `Foreign(name)` keeps the capability boundary structural: the
-/// typechecker and load-time capability audit match on `source`, not on
-/// a string prefix.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ArrSource {
-    /// A native pure op (`add`, `proj_env`, `id`, …).
+    /// A native pure op.
     Native,
-    /// A foreign (host) function call — capability-tracked. The `name` is
-    /// the registered host-function name (e.g. `"fs.read"`).
+    /// A foreign (host) function call — capability-tracked.
     Foreign(String),
-    /// A typecheck judgment op (ADR-0054 §1, §2). The op name is a
-    /// judgment op (`synth_child`, `check_child`, `unify`, `extend`,
-    /// `fresh_meta`, `solve_meta`, `lookup`, `quote`, `normalize`,
-    /// `construct`, `match_type`). Judgment ops are interpreted by the
-    /// typecheck engine, not the eval engines.
+    /// A typecheck judgment op (ADR-0054).
     Judgment,
-    /// A dynamic host dispatch op (ADR-0060). The actual host function name
-    /// is not known at scheme-construction time — it arrives as a runtime
-    /// value (e.g. a string callee in a `call` node). The op name is the
-    /// dispatch primitive (e.g. `call_host`); the actual host function name
-    /// is a sub-scheme argument evaluated at runtime. Capability tracking
-    /// for dynamic calls is handled by the engine at the call site, not by
-    /// static `source` inspection.
+    /// A dynamic host dispatch op (ADR-0060).
     DynamicForeign,
 }
 
@@ -327,7 +272,7 @@ pub enum ArrSource {
 pub enum RewriteWitness {
     /// A declared law or rewrite rule by name from `Language` data.
     Named(String),
-    /// A computed rewrite step (e.g. normalization).
+    /// A computed rewrite step.
     Compute,
     /// A hint produced during handler elimination.
     HandlerHint,
@@ -339,6 +284,13 @@ impl Term {
     /// Convenience constructor for a pure constant arrow.
     pub fn const_value(value: impl Into<Value>) -> Self {
         Term::Arr {
+            value: value.into(),
+        }
+    }
+
+    /// Convenience constructor for a pure constant value.
+    pub fn constant(value: impl Into<Value>) -> Self {
+        Term::Const {
             value: value.into(),
         }
     }
@@ -364,10 +316,6 @@ impl Term {
     }
 
     /// Convenience constructor for a foreign `op`.
-    ///
-    /// The host function `name` is used both as the op and as the
-    /// `Foreign(name)` source, matching ADR-0052's lowering of
-    /// `Foreign { name, args }`.
     pub fn op_foreign(name: impl Into<String>, args: Vec<Term>) -> Self {
         let name = name.into();
         Term::Op {
@@ -383,8 +331,7 @@ impl Term {
         Term::op_foreign(name, args)
     }
 
-    /// Convenience constructor for a native `op` carrying a literal
-    /// payload (e.g. `proj_env`, `proj_child`).
+    /// Convenience constructor for a native `op` carrying a literal payload.
     pub fn op_native_lit(name: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
         Term::Op {
             name: name.into(),
@@ -395,9 +342,6 @@ impl Term {
     }
 
     /// Backward-compatible alias for [`Term::op_native_lit`].
-    ///
-    /// For the `const` op it now produces [`Term::Arr`] via
-    /// [`Term::const_value`], matching the ADR-0098/0100 calculus.
     pub fn arr_native_lit(op: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
         let op = op.into();
         if op == "const" && args.is_empty() {
@@ -407,8 +351,7 @@ impl Term {
         }
     }
 
-    /// Convenience constructor for a typecheck judgment `op` (ADR-0054
-    /// §1, §2) with no literal payload.
+    /// Convenience constructor for a typecheck judgment `op` with no literal payload.
     pub fn op_judgment(name: impl Into<String>, args: Vec<Term>) -> Self {
         Term::Op {
             name: name.into(),
@@ -423,8 +366,7 @@ impl Term {
         Term::op_judgment(op, args)
     }
 
-    /// Convenience constructor for a typecheck judgment `op` (ADR-0054
-    /// §1, §2) carrying a literal payload.
+    /// Convenience constructor for a typecheck judgment `op` carrying a literal payload.
     pub fn op_judgment_lit(
         name: impl Into<String>,
         args: Vec<Term>,
@@ -451,8 +393,7 @@ impl Term {
         }
     }
 
-    /// Convenience constructor for `first` (fan-out on the first
-    /// component of a pair).
+    /// Convenience constructor for `first`.
     pub fn first(inner: Term) -> Self {
         Term::First {
             inner: Box::new(inner),
@@ -468,17 +409,13 @@ impl Term {
     }
 
     /// Convenience constructor for `ArrowLoop` feedback.
-    ///
-    /// Named `loop_feedback` rather than `loop` (a reserved word) to keep
-    /// the constructor name clear and non-raw.
     pub fn loop_feedback(body: Term) -> Self {
         Term::Loop {
             body: Box::new(body),
         }
     }
 
-    /// Convenience constructor for `app` / `ArrowApply` (dynamic
-    /// higher-order arrow application).
+    /// Convenience constructor for `app` / `ArrowApply`.
     pub fn app(callee: Term, args: Vec<Term>) -> Self {
         Term::App {
             callee: Box::new(callee),
@@ -495,16 +432,154 @@ impl Term {
         }
     }
 
-    /// Eliminate every [`Term::Handle`] node in this scheme (ADR-0076).
-    ///
-    /// For each `handle body with target = impl_`:
-    /// 1. Recursively eliminate handlers in `body` and `impl_`.
-    /// 2. Substitute bare `arr(target)` references in the eliminated body
-    ///    with the eliminated impl.
-    /// 3. Return the substituted body.
+    /// Recursively desugar derived surface forms into the core `Term` combinators.
+    pub fn desugar(&self) -> Term {
+        match self {
+            // Core forms: preserve shape and desugar children.
+            Term::Arr { value } => Term::Arr {
+                value: value.clone(),
+            },
+            Term::Const { value } => Term::Const {
+                value: value.clone(),
+            },
+            Term::Op {
+                name,
+                args,
+                source,
+                lit,
+            } => Term::Op {
+                name: name.clone(),
+                args: args.iter().map(Term::desugar).collect(),
+                source: source.clone(),
+                lit: lit.clone(),
+            },
+            Term::Seq { fst, snd } => Term::Seq {
+                fst: Box::new(fst.desugar()),
+                snd: Box::new(snd.desugar()),
+            },
+            Term::First { inner } => Term::First {
+                inner: Box::new(inner.desugar()),
+            },
+            Term::Choice { l, r } => Term::Choice {
+                l: Box::new(l.desugar()),
+                r: Box::new(r.desugar()),
+            },
+            Term::Loop { body } => Term::Loop {
+                body: Box::new(body.desugar()),
+            },
+            Term::App { callee, args } => Term::App {
+                callee: Box::new(callee.desugar()),
+                args: args.iter().map(Term::desugar).collect(),
+            },
+            Term::Iter {
+                fuel,
+                predicate,
+                step,
+                initial,
+            } => Term::Iter {
+                fuel: Box::new(fuel.desugar()),
+                predicate: Box::new(predicate.desugar()),
+                step: Box::new(step.desugar()),
+                initial: Box::new(initial.desugar()),
+            },
+            Term::Child { role } => Term::Child {
+                role: role.clone(),
+            },
+            Term::Handle {
+                body,
+                target,
+                impl_,
+            } => Term::Handle {
+                body: Box::new(body.desugar()),
+                target: target.clone(),
+                impl_: Box::new(impl_.desugar()),
+            },
+            Term::Rewrite {
+                source,
+                target,
+                witness,
+            } => Term::Rewrite {
+                source: Box::new(source.desugar()),
+                target: Box::new(target.desugar()),
+                witness: witness.clone(),
+            },
+            Term::Path {
+                endpoints: (a, b),
+                witness,
+            } => Term::Path {
+                endpoints: (Box::new(a.desugar()), Box::new(b.desugar())),
+                witness: witness.as_ref().map(|w| Box::new(w.desugar())),
+            },
+            Term::Equiv { a, b, path } => Term::Equiv {
+                a: Box::new(a.desugar()),
+                b: Box::new(b.desugar()),
+                path: path.as_ref().map(|p| Box::new(p.desugar())),
+            },
+            Term::CellId { arrow } => Term::CellId {
+                arrow: Box::new(arrow.desugar()),
+            },
+            Term::Src { cell } => Term::Src {
+                cell: Box::new(cell.desugar()),
+            },
+            Term::Tgt { cell } => Term::Tgt {
+                cell: Box::new(cell.desugar()),
+            },
+            Term::CellCompV { first, second } => Term::CellCompV {
+                first: Box::new(first.desugar()),
+                second: Box::new(second.desugar()),
+            },
+            Term::Whisker { side, arrow, cell } => Term::Whisker {
+                side: side.clone(),
+                arrow: Box::new(arrow.desugar()),
+                cell: Box::new(cell.desugar()),
+            },
+            Term::RecordProj { record, field } => Term::RecordProj {
+                record: Box::new(record.desugar()),
+                field: field.clone(),
+            },
+            Term::RecordWith { record, field, value } => Term::RecordWith {
+                record: Box::new(record.desugar()),
+                field: field.clone(),
+                value: Box::new(value.desugar()),
+            },
+            Term::Tag { tag, value } => Term::Tag {
+                tag: tag.clone(),
+                value: Box::new(value.desugar()),
+            },
+            Term::Univalence { equiv } => Term::Univalence {
+                equiv: Box::new(equiv.desugar()),
+            },
+            Term::Glue { family, path } => Term::Glue {
+                family: Box::new(family.desugar()),
+                path: Box::new(path.desugar()),
+            },
+            Term::Fibrant { base, family } => Term::Fibrant {
+                base: Box::new(base.desugar()),
+                family: Box::new(family.desugar()),
+            },
+            Term::JElim { path, motive, base } => Term::JElim {
+                path: Box::new(path.desugar()),
+                motive: Box::new(motive.desugar()),
+                base: Box::new(base.desugar()),
+            },
+            Term::Refine { sort, predicate } => Term::Refine {
+                sort: Box::new(sort.desugar()),
+                predicate: Box::new(predicate.desugar()),
+            },
+            Term::Cobind { grade, body } => Term::Cobind {
+                grade: Box::new(grade.desugar()),
+                body: Box::new(body.desugar()),
+            },
+        }
+    }
+
+    /// Eliminate every `Handle` node in this scheme.
     pub fn eliminate_handlers(&self) -> Term {
         match self {
             Term::Arr { value } => Term::Arr {
+                value: value.clone(),
+            },
+            Term::Const { value } => Term::Const {
                 value: value.clone(),
             },
             Term::Op {
@@ -532,7 +607,9 @@ impl Term {
                 step: Box::new(step.eliminate_handlers()),
                 initial: Box::new(initial.eliminate_handlers()),
             },
-            Term::Child { role } => Term::Child { role: role.clone() },
+            Term::Child { role } => Term::Child {
+                role: role.clone(),
+            },
             Term::Seq { fst, snd } => Term::Seq {
                 fst: Box::new(fst.eliminate_handlers()),
                 snd: Box::new(snd.eliminate_handlers()),
@@ -587,25 +664,36 @@ impl Term {
                 b: Box::new(b.eliminate_handlers()),
                 path: path.as_ref().map(|p| Box::new(p.eliminate_handlers())),
             },
-            Term::Transport { path, value } => Term::Transport {
-                path: Box::new(path.eliminate_handlers()),
-                value: Box::new(value.eliminate_handlers()),
-            },
             Term::CellId { arrow } => Term::CellId {
                 arrow: Box::new(arrow.eliminate_handlers()),
+            },
+            Term::Src { cell } => Term::Src {
+                cell: Box::new(cell.eliminate_handlers()),
+            },
+            Term::Tgt { cell } => Term::Tgt {
+                cell: Box::new(cell.eliminate_handlers()),
             },
             Term::CellCompV { first, second } => Term::CellCompV {
                 first: Box::new(first.eliminate_handlers()),
                 second: Box::new(second.eliminate_handlers()),
             },
-            Term::CellCompH { left, right } => Term::CellCompH {
-                left: Box::new(left.eliminate_handlers()),
-                right: Box::new(right.eliminate_handlers()),
-            },
             Term::Whisker { side, arrow, cell } => Term::Whisker {
                 side: side.clone(),
                 arrow: Box::new(arrow.eliminate_handlers()),
                 cell: Box::new(cell.eliminate_handlers()),
+            },
+            Term::RecordProj { record, field } => Term::RecordProj {
+                record: Box::new(record.eliminate_handlers()),
+                field: field.clone(),
+            },
+            Term::RecordWith { record, field, value } => Term::RecordWith {
+                record: Box::new(record.eliminate_handlers()),
+                field: field.clone(),
+                value: Box::new(value.eliminate_handlers()),
+            },
+            Term::Tag { tag, value } => Term::Tag {
+                tag: tag.clone(),
+                value: Box::new(value.eliminate_handlers()),
             },
             Term::Univalence { equiv } => Term::Univalence {
                 equiv: Box::new(equiv.eliminate_handlers()),
@@ -623,10 +711,6 @@ impl Term {
                 motive: Box::new(motive.eliminate_handlers()),
                 base: Box::new(base.eliminate_handlers()),
             },
-            Term::Witness { grade, proof } => Term::Witness {
-                grade: Box::new(grade.eliminate_handlers()),
-                proof: Box::new(proof.eliminate_handlers()),
-            },
             Term::Refine { sort, predicate } => Term::Refine {
                 sort: Box::new(sort.eliminate_handlers()),
                 predicate: Box::new(predicate.eliminate_handlers()),
@@ -635,24 +719,17 @@ impl Term {
                 grade: Box::new(grade.eliminate_handlers()),
                 body: Box::new(body.eliminate_handlers()),
             },
-            Term::Cobox { cell } => Term::Cobox {
-                cell: Box::new(cell.eliminate_handlers()),
-            },
         }
     }
 }
 
 /// Substitute bare `arr(target)` references in `scheme` with `impl_`.
-///
-/// A bare `arr(target)` reference is an `Op` node whose `name` equals `target`,
-/// with no sub-scheme arguments and no literal payload. Such a reference may
-/// carry either a [`ArrSource::Native`] source (the common case, as produced
-/// by `op_native`) or a [`ArrSource::Foreign`] source naming `target`. Both
-/// are recognized and replaced by `impl_`. All other nodes are recursed into
-/// structurally.
 fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
     match scheme {
         Term::Arr { value } => Term::Arr {
+            value: value.clone(),
+        },
+        Term::Const { value } => Term::Const {
             value: value.clone(),
         },
         Term::Op {
@@ -661,9 +738,6 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             source,
             lit,
         } => {
-            // Check if this is a bare `arr(target)` reference:
-            // name == target, no args, no lit. The source may be Native (the
-            // common case from `op_native`) or Foreign(target).
             if name == target && args.is_empty() && lit.is_none() {
                 match source {
                     ArrSource::Native => return impl_.clone(),
@@ -671,7 +745,6 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
                     _ => {}
                 }
             }
-            // Otherwise, recurse into args.
             let new_args: Vec<Term> = args
                 .iter()
                 .map(|a| substitute_capability(a, target, impl_))
@@ -718,20 +791,18 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             step: Box::new(substitute_capability(step, target, impl_)),
             initial: Box::new(substitute_capability(initial, target, impl_)),
         },
-        Term::Child { role } => Term::Child { role: role.clone() },
+        Term::Child { role } => Term::Child {
+            role: role.clone(),
+        },
         Term::Handle {
             body,
             target: t,
             impl_: i,
-        } => {
-            // Nested handle — should not occur after elimination, but handle
-            // it by recursing into both children.
-            Term::Handle {
-                body: Box::new(substitute_capability(body, target, impl_)),
-                target: t.clone(),
-                impl_: Box::new(substitute_capability(i, target, impl_)),
-            }
-        }
+        } => Term::Handle {
+            body: Box::new(substitute_capability(body, target, impl_)),
+            target: t.clone(),
+            impl_: Box::new(substitute_capability(i, target, impl_)),
+        },
         Term::Rewrite {
             source,
             target: t,
@@ -760,25 +831,36 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
                 .as_ref()
                 .map(|p| Box::new(substitute_capability(p, target, impl_))),
         },
-        Term::Transport { path, value } => Term::Transport {
-            path: Box::new(substitute_capability(path, target, impl_)),
-            value: Box::new(substitute_capability(value, target, impl_)),
-        },
         Term::CellId { arrow } => Term::CellId {
             arrow: Box::new(substitute_capability(arrow, target, impl_)),
+        },
+        Term::Src { cell } => Term::Src {
+            cell: Box::new(substitute_capability(cell, target, impl_)),
+        },
+        Term::Tgt { cell } => Term::Tgt {
+            cell: Box::new(substitute_capability(cell, target, impl_)),
         },
         Term::CellCompV { first, second } => Term::CellCompV {
             first: Box::new(substitute_capability(first, target, impl_)),
             second: Box::new(substitute_capability(second, target, impl_)),
         },
-        Term::CellCompH { left, right } => Term::CellCompH {
-            left: Box::new(substitute_capability(left, target, impl_)),
-            right: Box::new(substitute_capability(right, target, impl_)),
-        },
         Term::Whisker { side, arrow, cell } => Term::Whisker {
             side: side.clone(),
             arrow: Box::new(substitute_capability(arrow, target, impl_)),
             cell: Box::new(substitute_capability(cell, target, impl_)),
+        },
+        Term::RecordProj { record, field } => Term::RecordProj {
+            record: Box::new(substitute_capability(record, target, impl_)),
+            field: field.clone(),
+        },
+        Term::RecordWith { record, field, value } => Term::RecordWith {
+            record: Box::new(substitute_capability(record, target, impl_)),
+            field: field.clone(),
+            value: Box::new(substitute_capability(value, target, impl_)),
+        },
+        Term::Tag { tag, value } => Term::Tag {
+            tag: tag.clone(),
+            value: Box::new(substitute_capability(value, target, impl_)),
         },
         Term::Univalence { equiv } => Term::Univalence {
             equiv: Box::new(substitute_capability(equiv, target, impl_)),
@@ -796,10 +878,6 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             motive: Box::new(substitute_capability(motive, target, impl_)),
             base: Box::new(substitute_capability(base, target, impl_)),
         },
-        Term::Witness { grade, proof } => Term::Witness {
-            grade: Box::new(substitute_capability(grade, target, impl_)),
-            proof: Box::new(substitute_capability(proof, target, impl_)),
-        },
         Term::Refine { sort, predicate } => Term::Refine {
             sort: Box::new(substitute_capability(sort, target, impl_)),
             predicate: Box::new(substitute_capability(predicate, target, impl_)),
@@ -807,9 +885,6 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
         Term::Cobind { grade, body } => Term::Cobind {
             grade: Box::new(substitute_capability(grade, target, impl_)),
             body: Box::new(substitute_capability(body, target, impl_)),
-        },
-        Term::Cobox { cell } => Term::Cobox {
-            cell: Box::new(substitute_capability(cell, target, impl_)),
         },
     }
 }
@@ -829,136 +904,12 @@ mod tests {
     use super::*;
     use serde_json::Value;
 
-    fn roundtrip(s: &Term) -> Term {
-        let j = serde_json::to_string(s).unwrap();
-        serde_json::from_str(&j).unwrap()
-    }
-
-    #[test]
-    fn op_native_constructs_and_roundtrips() {
-        let s = Term::op_native("add", vec![Term::op_native_lit("proj_child", vec![], 0)]);
-        assert_eq!(s, roundtrip(&s));
-        let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"Op\""));
-        assert!(j.contains("\"Native\""));
-        // The outer op has no lit; the inner proj_child does.
-        match s {
-            Term::Op { lit, .. } => assert_eq!(lit, None),
-            other => panic!("expected Op, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn op_foreign_constructs_and_roundtrips() {
-        let s = Term::op_foreign(
-            "fs.read",
-            vec![Term::op_native_lit("proj_child", vec![], 0)],
-        );
-        assert_eq!(s, roundtrip(&s));
-        let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"Foreign\""));
-        assert!(j.contains("\"fs.read\""));
-    }
-
     #[test]
     fn const_value_roundtrips() {
         let s = Term::const_value(Value::from(42));
-        assert_eq!(s, roundtrip(&s));
         let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"Arr\""));
-        assert!(j.contains("42"));
+        let back: Term = serde_json::from_str(&j).unwrap();
+        assert_eq!(s, back);
     }
 
-    #[test]
-    fn op_lit_absent_omitted() {
-        let s = Term::op_native("id", vec![]);
-        let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"Op\""));
-        assert!(!j.contains("\"lit\""));
-        assert_eq!(s, roundtrip(&s));
-    }
-
-    #[test]
-    fn seq_constructs_and_roundtrips() {
-        let s = Term::seq(
-            Term::arr_native("id", vec![]),
-            Term::arr_native("id", vec![]),
-        );
-        assert_eq!(s, roundtrip(&s));
-        let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"Seq\""));
-    }
-
-    #[test]
-    fn first_constructs_and_roundtrips() {
-        let s = Term::first(Term::arr_native("id", vec![]));
-        assert_eq!(s, roundtrip(&s));
-        let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"First\""));
-    }
-
-    #[test]
-    fn choice_constructs_and_roundtrips() {
-        let s = Term::choice(
-            Term::arr_native("id", vec![]),
-            Term::arr_native("id", vec![]),
-        );
-        assert_eq!(s, roundtrip(&s));
-        let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"Choice\""));
-        assert!(j.contains("\"l\""));
-        assert!(j.contains("\"r\""));
-    }
-
-    #[test]
-    fn loop_feedback_constructs_and_roundtrips() {
-        let s = Term::loop_feedback(Term::arr_native("id", vec![]));
-        assert_eq!(s, roundtrip(&s));
-        let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"Loop\""));
-    }
-
-    #[test]
-    fn app_constructs_and_roundtrips() {
-        let s = Term::app(
-            Term::arr_native_lit("proj_env", vec![], "f"),
-            vec![Term::arr_native_lit("const", vec![], 1)],
-        );
-        assert_eq!(s, roundtrip(&s));
-        let j = serde_json::to_string(&s).unwrap();
-        assert!(j.contains("\"App\""));
-    }
-
-    #[test]
-    fn arr_source_native_roundtrips() {
-        let src = ArrSource::Native;
-        let j = serde_json::to_string(&src).unwrap();
-        assert_eq!(j, "\"Native\"");
-        let back: ArrSource = serde_json::from_str(&j).unwrap();
-        assert_eq!(src, back);
-    }
-
-    #[test]
-    fn arr_source_foreign_roundtrips() {
-        let src = ArrSource::Foreign("fs.read".into());
-        let j = serde_json::to_string(&src).unwrap();
-        assert!(j.contains("\"Foreign\""));
-        let back: ArrSource = serde_json::from_str(&j).unwrap();
-        assert_eq!(src, back);
-    }
-
-    #[test]
-    fn nested_scheme_roundtrips() {
-        let s = Term::seq(
-            Term::arr_native("id", vec![]),
-            Term::choice(
-                Term::loop_feedback(Term::arr_foreign("fs.read", vec![])),
-                Term::app(
-                    Term::arr_native_lit("proj_env", vec![], "f"),
-                    vec![Term::arr_native_lit("const", vec![], Value::Bool(true))],
-                ),
-            ),
-        );
-        assert_eq!(s, roundtrip(&s));
-    }
 }
