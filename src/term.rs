@@ -163,6 +163,32 @@ pub enum Term {
         /// Why the rewrite is sound.
         witness: RewriteWitness,
     },
+
+    /// `path (a, b) [witness]` — a path between two terms (ADR-0100).
+    Path {
+        /// The endpoints of the path.
+        endpoints: (Box<Term>, Box<Term>),
+        /// An optional witness for the path.
+        witness: Option<Box<Term>>,
+    },
+
+    /// `equiv a b [path]` — equality between two terms (ADR-0100).
+    Equiv {
+        /// The left-hand side.
+        a: Box<Term>,
+        /// The right-hand side.
+        b: Box<Term>,
+        /// An optional path witnessing the equivalence.
+        path: Option<Box<Term>>,
+    },
+
+    /// `transport path value` — transport a value along a path (ADR-0100).
+    Transport {
+        /// The path along which to transport.
+        path: Box<Term>,
+        /// The value to transport.
+        value: Box<Term>,
+    },
 }
 
 /// Whether an `Op` is a native pure function or a foreign host call.
@@ -443,6 +469,25 @@ impl Term {
                 target: Box::new(target.eliminate_handlers()),
                 witness: witness.clone(),
             },
+            Term::Path {
+                endpoints: (a, b),
+                witness,
+            } => Term::Path {
+                endpoints: (
+                    Box::new(a.eliminate_handlers()),
+                    Box::new(b.eliminate_handlers()),
+                ),
+                witness: witness.as_ref().map(|w| Box::new(w.eliminate_handlers())),
+            },
+            Term::Equiv { a, b, path } => Term::Equiv {
+                a: Box::new(a.eliminate_handlers()),
+                b: Box::new(b.eliminate_handlers()),
+                path: path.as_ref().map(|p| Box::new(p.eliminate_handlers())),
+            },
+            Term::Transport { path, value } => Term::Transport {
+                path: Box::new(path.eliminate_handlers()),
+                value: Box::new(value.eliminate_handlers()),
+            },
         }
     }
 }
@@ -545,6 +590,29 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             source: Box::new(substitute_capability(source, target, impl_)),
             target: Box::new(substitute_capability(t, target, impl_)),
             witness: witness.clone(),
+        },
+        Term::Path {
+            endpoints: (a, b),
+            witness,
+        } => Term::Path {
+            endpoints: (
+                Box::new(substitute_capability(a, target, impl_)),
+                Box::new(substitute_capability(b, target, impl_)),
+            ),
+            witness: witness
+                .as_ref()
+                .map(|w| Box::new(substitute_capability(w, target, impl_))),
+        },
+        Term::Equiv { a, b, path } => Term::Equiv {
+            a: Box::new(substitute_capability(a, target, impl_)),
+            b: Box::new(substitute_capability(b, target, impl_)),
+            path: path
+                .as_ref()
+                .map(|p| Box::new(substitute_capability(p, target, impl_))),
+        },
+        Term::Transport { path, value } => Term::Transport {
+            path: Box::new(substitute_capability(path, target, impl_)),
+            value: Box::new(substitute_capability(value, target, impl_)),
         },
     }
 }
