@@ -100,17 +100,33 @@ pub enum LangError {
 }
 
 /// The result of a model-level rewrite attempt.
-pub enum RewriteResult {
-    /// The source and target are equal.
-    Equal,
+pub enum RewriteResult<T> {
+    /// The source and target are equal, carrying the (shared) value.
+    Equal(T),
+    /// The source and target are not equal.
+    NotEqual,
     /// Replace the source with the target.
     Replace,
     /// The rewrite is logically proved.
     Proved,
     /// The rewrite is compiled to a runtime form.
     Compiled,
+    /// The rewrite produced a transformed target value.
+    Rewritten(T),
     /// The rewrite is not supported by this model.
     Unsupported,
+}
+
+impl<T> RewriteResult<T> {
+    /// Return the value carried by an `Equal` or `Rewritten` result.
+    ///
+    /// Panics for `NotEqual`, `Replace`, `Proved`, `Compiled`, and `Unsupported`.
+    pub fn into_value(self) -> T {
+        match self {
+            RewriteResult::Equal(v) | RewriteResult::Rewritten(v) => v,
+            _ => panic!("called `RewriteResult::into_value` on a result without a value"),
+        }
+    }
 }
 
 /// Context passed to `Model` methods.
@@ -165,5 +181,5 @@ pub trait Model {
         witness: &RewriteWitness,
         incoming: &Self::Value,
         ctx: &mut ModelCtx,
-    ) -> Result<RewriteResult, LangError>;
+    ) -> Result<RewriteResult<Self::Value>, LangError>;
 }
