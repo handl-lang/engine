@@ -256,11 +256,7 @@ impl Term {
 
     /// Convenience constructor for a native `op` carrying a literal
     /// payload (e.g. `proj_env`, `proj_child`).
-    pub fn op_native_lit(
-        name: impl Into<String>,
-        args: Vec<Term>,
-        lit: impl Into<Value>,
-    ) -> Self {
+    pub fn op_native_lit(name: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
         Term::Op {
             name: name.into(),
             args,
@@ -314,11 +310,7 @@ impl Term {
     }
 
     /// Backward-compatible alias for [`Term::op_judgment_lit`].
-    pub fn arr_judgment_lit(
-        op: impl Into<String>,
-        args: Vec<Term>,
-        lit: impl Into<Value>,
-    ) -> Self {
+    pub fn arr_judgment_lit(op: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
         Term::op_judgment_lit(op, args, lit)
     }
 
@@ -411,9 +403,7 @@ impl Term {
                 step: Box::new(step.eliminate_handlers()),
                 initial: Box::new(initial.eliminate_handlers()),
             },
-            Term::Child { role } => Term::Child {
-                role: role.clone(),
-            },
+            Term::Child { role } => Term::Child { role: role.clone() },
             Term::Seq { fst, snd } => Term::Seq {
                 fst: Box::new(fst.eliminate_handlers()),
                 snd: Box::new(snd.eliminate_handlers()),
@@ -533,9 +523,7 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             step: Box::new(substitute_capability(step, target, impl_)),
             initial: Box::new(substitute_capability(initial, target, impl_)),
         },
-        Term::Child { role } => Term::Child {
-            role: role.clone(),
-        },
+        Term::Child { role } => Term::Child { role: role.clone() },
         Term::Handle {
             body,
             target: t,

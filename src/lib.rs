@@ -5,7 +5,7 @@
 pub mod term;
 
 pub use term::{
-    eliminate_all_handlers, eliminate_handler_in_scheme, ArrSource, RewriteWitness, Term,
+    ArrSource, RewriteWitness, Term, eliminate_all_handlers, eliminate_handler_in_scheme,
 };
 
 /// A reference to a node in an AST arena.
@@ -46,6 +46,19 @@ pub trait LanguageView {
 
     /// The type-rule synth scheme (`Term`) registered for `kind`, if any.
     fn type_rule(&self, kind: &str) -> Option<&Term>;
+
+    /// The evaluated `op` declaration value for `name`, if any.
+    ///
+    /// An `op` value is a tagged record
+    /// `{"__tag__": "op", "name": ..., "inputs": ..., "output": ...,
+    /// "grade": ...}`.
+    fn op_decl(&self, name: &str) -> Option<serde_json::Value>;
+
+    /// The first `handler` value whose `grades` list contains `grade`, if any.
+    ///
+    /// A handler value is a tagged record
+    /// `{"__tag__": "Handler", "grades": [...], "impls": {...}}`.
+    fn handler_for_grade(&self, grade: &str) -> Option<serde_json::Value>;
 }
 
 /// A minimal, object-safe view over an AST arena.
