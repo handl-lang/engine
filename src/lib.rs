@@ -8,21 +8,64 @@ pub use term::{
     eliminate_all_handlers, eliminate_handler_in_scheme, ArrSource, RewriteWitness, Term,
 };
 
-/// Placeholder `Ast` type for the `Model` skeleton.
-#[derive(Debug, Clone)]
-pub struct Ast;
+/// A reference to a node in an AST arena.
+///
+/// The real AST type lives in `handl-language` (`handl_language::AstRef`, a
+/// `usize` newtype); `plugin-engine` cannot name that type without creating
+/// a dependency cycle (`handl-language` already depends on `plugin-engine`
+/// for [`Term`]), so the handle is exposed here as the bare arena index.
+pub type AstRef = usize;
 
-/// Placeholder `AstNode` type for the `Model` skeleton.
+/// Placeholder marker for an AST node in [`ModelCtx`].
+///
+/// The concrete node type is `handl_language::AstNode`, which
+/// `plugin-engine` cannot name without a dependency cycle. `Model` impls
+/// cannot inspect it yet — it only keeps the reference alive. Node access
+/// goes through [`AstView`] instead.
 #[derive(Debug, Clone)]
 pub struct AstNode;
 
-/// Placeholder `AstRef` type for the `Model` skeleton.
-#[derive(Debug, Clone, Copy)]
-pub struct AstRef;
+/// A minimal, object-safe view over a language definition.
+///
+/// Implemented by `handl_language::Language` (in `handl-language`, which
+/// already depends on `plugin-engine`, so no cycle is introduced).
+/// [`Model`] impls use this to resolve AST child positions by named role
+/// (ADR-0081) and to look up eval schemes / type rules by node kind —
+/// never hardcoded `kind ==` checks.
+pub trait LanguageView {
+    /// Upcast for implementations that need the concrete language type.
+    fn as_any(&self) -> &dyn std::any::Any;
 
-/// Placeholder `Language` type for the `Model` skeleton.
-#[derive(Debug, Clone)]
-pub struct Language;
+    /// Resolve the child position of `role` within nodes of kind `kind`
+    /// (ADR-0081). Returns `None` when the kind has no shape or no such
+    /// role (positional fallback is then the caller's concern).
+    fn child_role_index(&self, kind: &str, role: &str) -> Option<usize>;
+
+    /// The eval scheme (`Term`) registered for `kind`, if any.
+    fn eval_rule(&self, kind: &str) -> Option<&Term>;
+
+    /// The type-rule synth scheme (`Term`) registered for `kind`, if any.
+    fn type_rule(&self, kind: &str) -> Option<&Term>;
+}
+
+/// A minimal, object-safe view over an AST arena.
+///
+/// Implemented by `handl_language::Ast` (in `handl-language`). The real
+/// node type cannot cross this boundary, so nodes are exposed through
+/// accessors: [`node_kind`](AstView::node_kind) and
+/// [`node_child`](AstView::node_child) (children ride in
+/// `node.payload["children"]` as arena indices).
+pub trait AstView {
+    /// Upcast for implementations that need the concrete AST type.
+    fn as_any(&self) -> &dyn std::any::Any;
+
+    /// The kind string of the node at `r`, if `r` is in bounds.
+    fn node_kind(&self, r: AstRef) -> Option<&str>;
+
+    /// The arena ref of the child at position `index` of node `r`, if the
+    /// node exists and has a child at that position.
+    fn node_child(&self, r: AstRef, index: usize) -> Option<AstRef>;
+}
 
 /// Placeholder language error type for the `Model` skeleton.
 #[derive(Debug, Clone, PartialEq)]
@@ -47,11 +90,11 @@ pub enum RewriteResult {
 
 /// Context passed to `Model` methods.
 pub struct ModelCtx<'a> {
-    /// The full AST being processed.
-    pub ast: &'a Ast,
-    /// The language definition in scope.
-    pub lang: &'a Language,
-    /// The current AST node.
+    /// The full AST being processed, viewed through [`AstView`].
+    pub ast: &'a dyn AstView,
+    /// The language definition in scope, viewed through [`LanguageView`].
+    pub lang: &'a dyn LanguageView,
+    /// The current AST node (opaque marker — access it via `ast` instead).
     pub current_node: &'a AstNode,
     /// A reference to the current node.
     pub node_ref: AstRef,
