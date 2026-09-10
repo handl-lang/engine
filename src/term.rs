@@ -482,9 +482,7 @@ impl Term {
                 step: Box::new(step.desugar()),
                 initial: Box::new(initial.desugar()),
             },
-            Term::Child { role } => Term::Child {
-                role: role.clone(),
-            },
+            Term::Child { role } => Term::Child { role: role.clone() },
             Term::Handle {
                 body,
                 target,
@@ -537,7 +535,11 @@ impl Term {
                 record: Box::new(record.desugar()),
                 field: field.clone(),
             },
-            Term::RecordWith { record, field, value } => Term::RecordWith {
+            Term::RecordWith {
+                record,
+                field,
+                value,
+            } => Term::RecordWith {
                 record: Box::new(record.desugar()),
                 field: field.clone(),
                 value: Box::new(value.desugar()),
@@ -607,9 +609,7 @@ impl Term {
                 step: Box::new(step.eliminate_handlers()),
                 initial: Box::new(initial.eliminate_handlers()),
             },
-            Term::Child { role } => Term::Child {
-                role: role.clone(),
-            },
+            Term::Child { role } => Term::Child { role: role.clone() },
             Term::Seq { fst, snd } => Term::Seq {
                 fst: Box::new(fst.eliminate_handlers()),
                 snd: Box::new(snd.eliminate_handlers()),
@@ -686,7 +686,11 @@ impl Term {
                 record: Box::new(record.eliminate_handlers()),
                 field: field.clone(),
             },
-            Term::RecordWith { record, field, value } => Term::RecordWith {
+            Term::RecordWith {
+                record,
+                field,
+                value,
+            } => Term::RecordWith {
                 record: Box::new(record.eliminate_handlers()),
                 field: field.clone(),
                 value: Box::new(value.eliminate_handlers()),
@@ -791,9 +795,7 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             step: Box::new(substitute_capability(step, target, impl_)),
             initial: Box::new(substitute_capability(initial, target, impl_)),
         },
-        Term::Child { role } => Term::Child {
-            role: role.clone(),
-        },
+        Term::Child { role } => Term::Child { role: role.clone() },
         Term::Handle {
             body,
             target: t,
@@ -853,7 +855,11 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             record: Box::new(substitute_capability(record, target, impl_)),
             field: field.clone(),
         },
-        Term::RecordWith { record, field, value } => Term::RecordWith {
+        Term::RecordWith {
+            record,
+            field,
+            value,
+        } => Term::RecordWith {
             record: Box::new(substitute_capability(record, target, impl_)),
             field: field.clone(),
             value: Box::new(substitute_capability(value, target, impl_)),
@@ -911,5 +917,4 @@ mod tests {
         let back: Term = serde_json::from_str(&j).unwrap();
         assert_eq!(s, back);
     }
-
 }
