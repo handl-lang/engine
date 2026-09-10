@@ -116,6 +116,14 @@ impl TermData {
             .unwrap_or_default()
     }
 
+    /// For an `Op` term, parse the `source` field back into an [`ArrSource`].
+    ///
+    /// Returns `None` when the `source` field is absent or malformed (which
+    /// only happens for a non-`Op` `TermData` or a corrupt record).
+    pub fn arr_source(&self) -> Option<ArrSource> {
+        value_to_arr_source(self.0.get("source")).ok()
+    }
+
     // --- Constructors for all 28 Term variants ---
 
     /// Construct an `Arr` (pure constant arrow).
