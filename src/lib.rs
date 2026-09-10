@@ -3,10 +3,12 @@
 //! Foundation types for pluggable interpretation and rewrite models.
 
 pub mod term;
+pub mod term_data;
 
 pub use term::{
     ArrSource, RewriteWitness, Side, Term, eliminate_all_handlers, eliminate_handler_in_scheme,
 };
+pub use term_data::TermData;
 
 /// A reference to a node in an AST arena.
 ///
@@ -182,4 +184,207 @@ pub trait Model {
         incoming: &Self::Value,
         ctx: &mut ModelCtx,
     ) -> Result<RewriteResult<Self::Value>, LangError>;
+}
+
+/// ADR-0103: identify `Term` variants that are HoTT-specific (type/proof
+/// judgments) and should delegate to the type model, not the kernel.
+///
+/// These tags "leaked into the computational kernel" per the ADR. They
+/// represent type-level semantics (paths, equivalences, cells, etc.) that
+/// belong in `type_model.hnl`, not in the Rust execution engines.
+///
+/// As the ADR-0103 migration progresses, more tags move from the kernel
+/// (Rust `ValueModel`) to the delegate model (Handl-authored `.hnl`).
+/// This predicate is the boundary function used by [`CompositeModel`] to
+/// decide which model handles each `Term`.
+pub fn is_hott_tag(term: &Term) -> bool {
+    matches!(
+        term,
+        Term::Path { .. }
+            | Term::Equiv { .. }
+            | Term::CellId { .. }
+            | Term::Src { .. }
+            | Term::Tgt { .. }
+            | Term::CellCompV { .. }
+            | Term::Whisker { .. }
+            | Term::Univalence { .. }
+            | Term::Glue { .. }
+            | Term::Fibrant { .. }
+            | Term::JElim { .. }
+            | Term::Refine { .. }
+            | Term::Cobind { .. }
+            | Term::Rewrite { .. }
+    )
+}
+
+/// A composite model that delegates specific `Term` tags to a delegate model
+/// while using a primary model for all other tags.
+///
+/// This is the ADR-0103 Phase 4 infrastructure: HoTT-specific tags (Path, Equiv,
+/// CellId, etc.) delegate to a Handl-authored model (data), while core
+/// arrow-calculus tags stay in the Rust engine (bootstrap). As the migration
+/// progresses, more tags move to the delegate model.
+///
+/// The `delegated_tags` predicate determines which `Term`s go to the
+/// delegate. For `run`, the decision is based on the term itself. For
+/// `rewrite`, the decision is based on the source or target — if either
+/// is delegated, the entire rewrite goes to the delegate.
+///
+/// # Type parameters
+///
+/// - `M1` — the primary model (e.g. the Rust `ValueModel`).
+/// - `M2` — the delegate model (e.g. `HandlModelAdapter`). Must share the
+///   same `Value` type as `M1`.
+pub struct CompositeModel<M1: Model, M2: Model<Value = M1::Value>> {
+    primary: M1,
+    delegate: M2,
+    delegated_tags: fn(&Term) -> bool,
+}
+
+impl<M1: Model, M2: Model<Value = M1::Value>> CompositeModel<M1, M2> {
+    /// Create a new composite model.
+    ///
+    /// - `primary` handles all tags that `delegated_tags` returns `false` for.
+    /// - `delegate` handles all tags that `delegated_tags` returns `true` for.
+    /// - `delegated_tags` is a function pointer (not a closure) so the
+    ///   composite model remains `Sized` without a `Box`.
+    pub fn new(primary: M1, delegate: M2, delegated_tags: fn(&Term) -> bool) -> Self {
+        Self {
+            primary,
+            delegate,
+            delegated_tags,
+        }
+    }
+}
+
+impl<M1: Model, M2: Model<Value = M1::Value>> Model for CompositeModel<M1, M2> {
+    type Value = M1::Value;
+
+    fn run(
+        &self,
+        term: &Term,
+        incoming: Self::Value,
+        ctx: &mut ModelCtx,
+    ) -> Result<Self::Value, LangError> {
+        if (self.delegated_tags)(term) {
+            self.delegate.run(term, incoming, ctx)
+        } else {
+            self.primary.run(term, incoming, ctx)
+        }
+    }
+
+    fn rewrite(
+        &self,
+        source: &Term,
+        target: &Term,
+        witness: &RewriteWitness,
+        incoming: &Self::Value,
+        ctx: &mut ModelCtx,
+    ) -> Result<RewriteResult<Self::Value>, LangError> {
+        if (self.delegated_tags)(source) || (self.delegated_tags)(target) {
+            self.delegate
+                .rewrite(source, target, witness, incoming, ctx)
+        } else {
+            self.primary.rewrite(source, target, witness, incoming, ctx)
+        }
+    }
+}
+
+// --- ADR-0103 continuation: data-driven model seam (TermData / Value) ---
+
+/// A data-driven model that runs on [`TermData`] / `serde_json::Value` instead
+/// of the `Term` enum (ADR-0103 continuation).
+///
+/// Parallels [`Model`] but operates on the tagged-record data representation,
+/// avoiding the `Term` enum round-trip for Handl-authored models. The
+/// `incoming` value is borrowed (data models do not own it) and `ctx` is
+/// shared immutably — data models read `handler_stack` / `node_ref` rather
+/// than mutating the context.
+pub trait ModelData {
+    /// Run the model on a `TermData` with the given incoming value.
+    fn run_data(
+        &self,
+        term: &TermData,
+        incoming: &serde_json::Value,
+        ctx: &ModelCtx,
+    ) -> Result<serde_json::Value, LangError>;
+}
+
+/// A composite [`ModelData`] that delegates specific `TermData` tags to a
+/// delegate model while using a primary model for all other tags.
+///
+/// Data-driven counterpart of [`CompositeModel`]: `delegated_tags` decides
+/// which `TermData` goes to the delegate (e.g. HoTT tags via
+/// [`TermData::is_hott_tag`]); the rest go to the primary. Both models must
+/// implement [`ModelData`].
+///
+/// # Type parameters
+///
+/// - `M1` — the primary model (e.g. `ModelDataAdapter<ValueModel>`).
+/// - `M2` — the delegate model (e.g. a Handl-authored `ModelData`).
+pub struct CompositeDataModel<M1: ModelData, M2: ModelData> {
+    primary: M1,
+    delegate: M2,
+    delegated_tags: fn(&TermData) -> bool,
+}
+
+impl<M1: ModelData, M2: ModelData> CompositeDataModel<M1, M2> {
+    /// Create a new data-driven composite model.
+    ///
+    /// - `primary` handles all tags that `delegated_tags` returns `false` for.
+    /// - `delegate` handles all tags that `delegated_tags` returns `true` for.
+    /// - `delegated_tags` is a function pointer (e.g.
+    ///   [`TermData::is_hott_tag`]) so the composite stays `Sized` without a
+    ///   `Box`.
+    pub fn new(primary: M1, delegate: M2, delegated_tags: fn(&TermData) -> bool) -> Self {
+        Self {
+            primary,
+            delegate,
+            delegated_tags,
+        }
+    }
+}
+
+impl<M1: ModelData, M2: ModelData> ModelData for CompositeDataModel<M1, M2> {
+    fn run_data(
+        &self,
+        term: &TermData,
+        incoming: &serde_json::Value,
+        ctx: &ModelCtx,
+    ) -> Result<serde_json::Value, LangError> {
+        if (self.delegated_tags)(term) {
+            self.delegate.run_data(term, incoming, ctx)
+        } else {
+            self.primary.run_data(term, incoming, ctx)
+        }
+    }
+}
+
+/// Adapter that wraps a [`Model`] as a [`ModelData`], converting `TermData`
+/// back to `Term` via [`TermData::to_term`].
+///
+/// This lets existing `Model` impls plug into the data-driven composite
+/// ([`CompositeDataModel`]) without a separate `ModelData` implementation.
+/// The incoming value is cloned and the context is rebuilt as a mutable copy
+/// (data models only read `handler_stack` / `node_ref`, so the clone is
+/// observationally invisible).
+pub struct ModelDataAdapter<M: Model<Value = serde_json::Value>>(pub M);
+
+impl<M: Model<Value = serde_json::Value>> ModelData for ModelDataAdapter<M> {
+    fn run_data(
+        &self,
+        term: &TermData,
+        incoming: &serde_json::Value,
+        ctx: &ModelCtx,
+    ) -> Result<serde_json::Value, LangError> {
+        let term = term.to_term().map_err(|_| LangError::NotImplemented)?;
+        let mut ctx = ModelCtx {
+            ast: ctx.ast,
+            lang: ctx.lang,
+            current_node: ctx.current_node,
+            node_ref: ctx.node_ref,
+            handler_stack: ctx.handler_stack.clone(),
+        };
+        self.0.run(&term, incoming.clone(), &mut ctx)
+    }
 }
