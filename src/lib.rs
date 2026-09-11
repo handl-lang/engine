@@ -141,9 +141,9 @@ pub struct ModelCtx<'a> {
     pub current_node: &'a AstNode,
     /// A reference to the current node.
     pub node_ref: AstRef,
-    /// Runtime handler stack for `Term::Handle` / `Term::Op` dynamic
-    /// dispatch. `Term::Handle` pushes its evaluated implementation here
-    /// for the duration of its body; `Term::Op` dispatch searches the
+    /// Runtime handler stack for the `"Handle"` / `"Op"` tag dynamic
+    /// dispatch. The `"Handle"` tag pushes its evaluated implementation here
+    /// for the duration of its body; the `"Op"` tag dispatch searches the
     /// stack innermost-last for a `{"__tag__": "Handler", "impls": {...}}`
     /// value providing the op name.
     pub handler_stack: Vec<serde_json::Value>,
@@ -198,23 +198,12 @@ pub trait Model {
 /// This predicate is the boundary function used by [`CompositeModel`] to
 /// decide which model handles each `Term`.
 pub fn is_hott_tag(term: &Term) -> bool {
-    matches!(
-        term,
-        Term::Path { .. }
-            | Term::Equiv { .. }
-            | Term::CellId { .. }
-            | Term::Src { .. }
-            | Term::Tgt { .. }
-            | Term::CellCompV { .. }
-            | Term::Whisker { .. }
-            | Term::Univalence { .. }
-            | Term::Glue { .. }
-            | Term::Fibrant { .. }
-            | Term::JElim { .. }
-            | Term::Refine { .. }
-            | Term::Cobind { .. }
-            | Term::Rewrite { .. }
-    )
+    // Thin wrapper: convert once to TermData and delegate to the data-driven
+    // tag check (ADR-0103). The tag set (Path, Equiv, CellId, Src, Tgt,
+    // CellCompV, Whisker, Univalence, Glue, Fibrant, JElim, Refine, Cobind,
+    // Rewrite) is matched against the `"__tag__"` field by
+    // [`TermData::is_hott_tag`].
+    TermData::from_term(term).is_hott_tag()
 }
 
 /// A composite model that delegates specific `Term` tags to a delegate model
