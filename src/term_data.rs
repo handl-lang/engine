@@ -30,7 +30,7 @@
 //! directly. The conversion is implemented manually to stay lossless and to
 //! keep the JSON shape stable independent of serde's enum representation.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::term::{ArrSource, RewriteWitness, Side, Term};
 
@@ -209,11 +209,7 @@ impl TermData {
     }
 
     /// Construct a `Rewrite` (scheme rewrite step).
-    pub fn rewrite(
-        source: TermData,
-        target: TermData,
-        witness: &RewriteWitness,
-    ) -> Self {
+    pub fn rewrite(source: TermData, target: TermData, witness: &RewriteWitness) -> Self {
         TermData(json!({
             "__tag__": "Rewrite",
             "source": source.0,
@@ -691,7 +687,9 @@ fn value_to_arr_source(value: Option<&Value>) -> Result<ArrSource, String> {
         Some(Value::String(s)) if s == "Native" => Ok(ArrSource::Native),
         Some(Value::String(s)) if s == "Judgment" => Ok(ArrSource::Judgment),
         Some(Value::String(s)) if s == "DynamicForeign" => Ok(ArrSource::DynamicForeign),
-        Some(Value::Object(map)) if map.get("__tag__").and_then(|v| v.as_str()) == Some("Foreign") => {
+        Some(Value::Object(map))
+            if map.get("__tag__").and_then(|v| v.as_str()) == Some("Foreign") =>
+        {
             let name = map
                 .get("value")
                 .and_then(|v| v.as_str())
@@ -775,11 +773,17 @@ mod tests {
     /// A representative `Term` for each of the 28 variants, used for
     /// round-trip and constructor-shape tests.
     fn sample_terms() -> Vec<(&'static str, Term)> {
-        let arr = Term::Arr { value: Value::from(5) };
-        let cst = Term::Const { value: Value::from(42) };
+        let arr = Term::Arr {
+            value: Value::from(5),
+        };
+        let cst = Term::Const {
+            value: Value::from(42),
+        };
         let op = Term::Op {
             name: "add".into(),
-            args: vec![Term::Arr { value: Value::from(1) }],
+            args: vec![Term::Arr {
+                value: Value::from(1),
+            }],
             source: ArrSource::Native,
             lit: None,
         };
@@ -808,118 +812,216 @@ mod tests {
             lit: None,
         };
         let seq = Term::Seq {
-            fst: Box::new(Term::Arr { value: Value::from(1) }),
-            snd: Box::new(Term::Arr { value: Value::from(2) }),
+            fst: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            snd: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let first = Term::First {
-            inner: Box::new(Term::Arr { value: Value::from(1) }),
+            inner: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
         };
         let choice = Term::Choice {
-            l: Box::new(Term::Arr { value: Value::from(1) }),
-            r: Box::new(Term::Arr { value: Value::from(2) }),
+            l: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            r: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let loop_ = Term::Loop {
-            body: Box::new(Term::Arr { value: Value::from(1) }),
+            body: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
         };
         let app = Term::App {
-            callee: Box::new(Term::Arr { value: Value::from(1) }),
-            args: vec![Term::Arr { value: Value::from(2) }],
+            callee: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            args: vec![Term::Arr {
+                value: Value::from(2),
+            }],
         };
         let iter = Term::Iter {
-            fuel: Box::new(Term::Arr { value: Value::from(3) }),
-            predicate: Box::new(Term::Arr { value: Value::from(1) }),
-            step: Box::new(Term::Arr { value: Value::from(1) }),
-            initial: Box::new(Term::Arr { value: Value::from(0) }),
+            fuel: Box::new(Term::Arr {
+                value: Value::from(3),
+            }),
+            predicate: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            step: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            initial: Box::new(Term::Arr {
+                value: Value::from(0),
+            }),
         };
-        let child = Term::Child { role: "value".into() };
+        let child = Term::Child {
+            role: "value".into(),
+        };
         let handle = Term::Handle {
-            body: Box::new(Term::Arr { value: Value::from(1) }),
+            body: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
             target: "io".into(),
-            impl_: Box::new(Term::Arr { value: Value::from(2) }),
+            impl_: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let rewrite = Term::Rewrite {
-            source: Box::new(Term::Arr { value: Value::from(1) }),
-            target: Box::new(Term::Arr { value: Value::from(2) }),
+            source: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            target: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
             witness: RewriteWitness::Named("comm".into()),
         };
         let rewrite_compute = Term::Rewrite {
-            source: Box::new(Term::Arr { value: Value::from(1) }),
-            target: Box::new(Term::Arr { value: Value::from(2) }),
+            source: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            target: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
             witness: RewriteWitness::Compute,
         };
         let path = Term::Path {
             endpoints: (
-                Box::new(Term::Arr { value: Value::from(1) }),
-                Box::new(Term::Arr { value: Value::from(2) }),
+                Box::new(Term::Arr {
+                    value: Value::from(1),
+                }),
+                Box::new(Term::Arr {
+                    value: Value::from(2),
+                }),
             ),
             witness: None,
         };
         let path_w = Term::Path {
             endpoints: (
-                Box::new(Term::Arr { value: Value::from(1) }),
-                Box::new(Term::Arr { value: Value::from(2) }),
+                Box::new(Term::Arr {
+                    value: Value::from(1),
+                }),
+                Box::new(Term::Arr {
+                    value: Value::from(2),
+                }),
             ),
-            witness: Some(Box::new(Term::Arr { value: Value::from(3) })),
+            witness: Some(Box::new(Term::Arr {
+                value: Value::from(3),
+            })),
         };
         let equiv = Term::Equiv {
-            a: Box::new(Term::Arr { value: Value::from(1) }),
-            b: Box::new(Term::Arr { value: Value::from(2) }),
+            a: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            b: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
             path: None,
         };
         let cell_id = Term::CellId {
-            arrow: Box::new(Term::Arr { value: Value::from(1) }),
+            arrow: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
         };
         let src = Term::Src {
-            cell: Box::new(Term::Arr { value: Value::from(1) }),
+            cell: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
         };
         let tgt = Term::Tgt {
-            cell: Box::new(Term::Arr { value: Value::from(1) }),
+            cell: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
         };
         let cell_comp_v = Term::CellCompV {
-            first: Box::new(Term::Arr { value: Value::from(1) }),
-            second: Box::new(Term::Arr { value: Value::from(2) }),
+            first: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            second: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let whisker = Term::Whisker {
             side: Side::Left,
-            arrow: Box::new(Term::Arr { value: Value::from(1) }),
-            cell: Box::new(Term::Arr { value: Value::from(2) }),
+            arrow: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            cell: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let record_proj = Term::RecordProj {
-            record: Box::new(Term::Arr { value: Value::from(1) }),
+            record: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
             field: "x".into(),
         };
         let record_with = Term::RecordWith {
-            record: Box::new(Term::Arr { value: Value::from(1) }),
+            record: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
             field: "x".into(),
-            value: Box::new(Term::Arr { value: Value::from(2) }),
+            value: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let tag = Term::Tag {
             tag: "Foo".into(),
-            value: Box::new(Term::Arr { value: Value::from(1) }),
+            value: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
         };
         let univalence = Term::Univalence {
-            equiv: Box::new(Term::Arr { value: Value::from(1) }),
+            equiv: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
         };
         let glue = Term::Glue {
-            family: Box::new(Term::Arr { value: Value::from(1) }),
-            path: Box::new(Term::Arr { value: Value::from(2) }),
+            family: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            path: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let fibrant = Term::Fibrant {
-            base: Box::new(Term::Arr { value: Value::from(1) }),
-            family: Box::new(Term::Arr { value: Value::from(2) }),
+            base: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            family: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let jelim = Term::JElim {
-            path: Box::new(Term::Arr { value: Value::from(1) }),
-            motive: Box::new(Term::Arr { value: Value::from(2) }),
-            base: Box::new(Term::Arr { value: Value::from(3) }),
+            path: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            motive: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
+            base: Box::new(Term::Arr {
+                value: Value::from(3),
+            }),
         };
         let refine = Term::Refine {
-            sort: Box::new(Term::Arr { value: Value::from(1) }),
-            predicate: Box::new(Term::Arr { value: Value::from(2) }),
+            sort: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            predicate: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
         let cobind = Term::Cobind {
-            grade: Box::new(Term::Arr { value: Value::from(1) }),
-            body: Box::new(Term::Arr { value: Value::from(2) }),
+            grade: Box::new(Term::Arr {
+                value: Value::from(1),
+            }),
+            body: Box::new(Term::Arr {
+                value: Value::from(2),
+            }),
         };
 
         vec![
@@ -988,7 +1090,10 @@ mod tests {
 
         let seq = TermData::seq(TermData::arr(1), TermData::arr(2));
         assert_eq!(seq.get_term("fst").unwrap().tag(), "Arr");
-        assert_eq!(seq.get_term("snd").unwrap().get("value"), Some(&Value::from(2)));
+        assert_eq!(
+            seq.get_term("snd").unwrap().get("value"),
+            Some(&Value::from(2))
+        );
 
         let op = TermData::op(
             "add",
@@ -1004,10 +1109,7 @@ mod tests {
     #[test]
     fn constructor_shapes() {
         // Arr
-        assert_eq!(
-            TermData::arr(5).0,
-            json!({ "__tag__": "Arr", "value": 5 })
-        );
+        assert_eq!(TermData::arr(5).0, json!({ "__tag__": "Arr", "value": 5 }));
         // Const
         assert_eq!(
             TermData::const_value(42).0,
@@ -1049,16 +1151,13 @@ mod tests {
                 TermData::arr(1),
                 TermData::arr(2),
                 &RewriteWitness::Named("comm".into())
-            ).0,
+            )
+            .0,
             json!({ "__tag__": "Rewrite", "source": { "__tag__": "Arr", "value": 1 }, "target": { "__tag__": "Arr", "value": 2 }, "witness": { "__tag__": "Named", "value": "comm" } })
         );
         // Rewrite Compute
         assert_eq!(
-            TermData::rewrite(
-                TermData::arr(1),
-                TermData::arr(2),
-                &RewriteWitness::Compute
-            ).0,
+            TermData::rewrite(TermData::arr(1), TermData::arr(2), &RewriteWitness::Compute).0,
             json!({ "__tag__": "Rewrite", "source": { "__tag__": "Arr", "value": 1 }, "target": { "__tag__": "Arr", "value": 2 }, "witness": { "__tag__": "Compute" } })
         );
     }
