@@ -4,7 +4,9 @@
 
 pub mod term;
 pub mod term_data;
+pub mod term_interpreter;
 
+pub use term_interpreter::interpret;
 pub use term::{
     ArrSource, RewriteWitness, Side, Term, eliminate_all_handlers, eliminate_handler_in_scheme,
 };
