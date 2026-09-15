@@ -27,7 +27,7 @@ pub enum Term {
     /// Pure constant arrow (Sanada's `arr`).
     Arr {
         /// The dimension of this arrow.
-        #[serde(default = "default_dim")]
+        #[serde(default = "default_dim_value")]
         dim: Box<Term>,
         /// The constant value.
         value: Value,
@@ -40,7 +40,7 @@ pub enum Term {
     /// Named graded operation (Sanada's `op`).
     Op {
         /// The dimension of this arrow.
-        #[serde(default = "default_dim")]
+        #[serde(default = "default_dim_value")]
         dim: Box<Term>,
         /// The operator name (e.g. `"add"`, `"proj_env"`).
         name: String,
@@ -205,15 +205,20 @@ pub enum RewriteWitness {
 }
 
 /// Default dimension for `Arr`/`Op` when not supplied (1).
-fn default_dim() -> Box<Term> {
+fn default_dim_value() -> Box<Term> {
     Box::new(Term::Const { value: Value::from(1) })
 }
 
 impl Term {
+    /// The default dimension (1) for `Arr`/`Op` when not supplied.
+    pub fn default_dim() -> Box<Term> {
+        default_dim_value()
+    }
+
     /// Convenience constructor for a pure constant arrow.
     pub fn const_value(value: impl Into<Value>) -> Self {
         Term::Arr {
-            dim: default_dim(),
+            dim: Self::default_dim(),
             value: value.into(),
         }
     }
@@ -228,7 +233,7 @@ impl Term {
     /// Convenience constructor for a native `op` with no literal payload.
     pub fn op_native(name: impl Into<String>, args: Vec<Term>) -> Self {
         Term::Op {
-            dim: default_dim(),
+            dim: Self::default_dim(),
             name: name.into(),
             args,
             source: ArrSource::Native,
@@ -250,7 +255,7 @@ impl Term {
     pub fn op_foreign(name: impl Into<String>, args: Vec<Term>) -> Self {
         let name = name.into();
         Term::Op {
-            dim: default_dim(),
+            dim: Self::default_dim(),
             name: name.clone(),
             args,
             source: ArrSource::Foreign(name),
@@ -266,7 +271,7 @@ impl Term {
     /// Convenience constructor for a native `op` carrying a literal payload.
     pub fn op_native_lit(name: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
         Term::Op {
-            dim: default_dim(),
+            dim: Self::default_dim(),
             name: name.into(),
             args,
             source: ArrSource::Native,
@@ -287,7 +292,7 @@ impl Term {
     /// Convenience constructor for a typecheck judgment `op` with no literal payload.
     pub fn op_judgment(name: impl Into<String>, args: Vec<Term>) -> Self {
         Term::Op {
-            dim: default_dim(),
+            dim: Self::default_dim(),
             name: name.into(),
             args,
             source: ArrSource::Judgment,
@@ -307,7 +312,7 @@ impl Term {
         lit: impl Into<Value>,
     ) -> Self {
         Term::Op {
-            dim: default_dim(),
+            dim: Self::default_dim(),
             name: name.into(),
             args,
             source: ArrSource::Judgment,
