@@ -4,7 +4,7 @@
 //! `Err` for any construct it does not (yet) handle, which lets callers fall
 //! back to the existing AST eval engine.
 
-use serde_json::{Map, Number, Value};
+use serde_json::{from_value, Map, Number, Value};
 
 use crate::Term;
 
@@ -22,19 +22,90 @@ pub fn interpret(term: &Term, input: Value) -> Result<Value, String> {
         }
 
         Term::First { inner } => {
-            let arr = input.as_array().ok_or_else(|| "First: input is not an array")?;
-            if arr.len() < 2 {
-                return Err("First: input array too short".into());
-            }
-            let a = arr[0].clone();
-            let b = arr[1].clone();
+            let (a, b) = pair_components(&input)?;
             let v = interpret(inner, a)?;
-            Ok(Value::Array(vec![v, b]))
+            Ok(mk_pair(v, b))
+        }
+
+        Term::Choice { l, r } => {
+            let (side, value) = either_side(input)?;
+            if side == "left" {
+                interpret(l, value)
+            } else {
+                interpret(r, value)
+            }
+        }
+
+        Term::Loop { body } => {
+            let mut state = Value::Null;
+            for _ in 0..10_000 {
+                let pair = mk_pair(input.clone(), state);
+                let out = interpret(body, pair)?;
+
+                if let Some(v) = either_left_value(&out) {
+                    return Ok(v);
+                }
+
+                if let Some(v) = either_right_value(&out) {
+                    state = v;
+                    continue;
+                }
+
+                // A plain pair is treated as (result, next-state) and terminates.
+                if let Ok((fst, _snd)) = pair_components(&out) {
+                    return Ok(fst);
+                }
+
+                // Anything else is treated as the final result for a simple
+                // non-nested loop; this is a conservative fallback.
+                return Ok(out);
+            }
+            eprintln!("[term-interpreter] Term::Loop: exceeded max iterations");
+            Err("Loop: exceeded max iterations".to_string())
+        }
+
+        Term::App { callee, args } => {
+            let arg_vals: Vec<Value> = args
+                .iter()
+                .map(|a| interpret(a, input.clone()))
+                .collect::<Result<_, _>>()?;
+            let arg_input = if arg_vals.len() == 1 {
+                arg_vals.into_iter().next().unwrap()
+            } else {
+                Value::Array(arg_vals)
+            };
+
+            let callee_val = interpret(callee, input)?;
+
+            // If the callee evaluates to a `Term` value, run it.
+            if let Ok(scheme) = from_value::<Term>(callee_val.clone()) {
+                return interpret(&scheme, arg_input);
+            }
+
+            // String callees are host-function names; the small interpreter
+            // has no registry, so report it clearly.
+            if callee_val.as_str().is_some() {
+                eprintln!(
+                    "[term-interpreter] Term::App: host-function callees are not supported"
+                );
+                return Err("App: host-function callees are not supported".to_string());
+            }
+
+            eprintln!("[term-interpreter] Term::App: callee is not an arrow value: {callee_val}");
+            Err("App: callee is not an arrow value".to_string())
+        }
+
+        Term::Handle { target, .. } => {
+            eprintln!("[term-interpreter] Term::Handle for `{target}` is not supported");
+            Err(format!("Handle: {target} is not supported"))
         }
 
         Term::Op { name, args, lit, .. } => eval_op(name, args, lit.as_ref(), input),
 
-        other => Err(format!("unsupported Term: {other:?}")),
+        other => {
+            eprintln!("[term-interpreter] unsupported Term: {other:?}");
+            Err(format!("unsupported Term: {other:?}"))
+        }
     }
 }
 
@@ -52,7 +123,7 @@ fn eval_op(name: &str, args: &[Term], lit: Option<&Value>, input: Value) -> Resu
                 .ok_or_else(|| "proj_child: index out of bounds".into())
         }
 
-        "math.add" | "math.mul" | "math.sub" | "math.div" => {
+        "add" | "mul" | "sub" | "div" => {
             if args.is_empty() {
                 return Err("math op: no arguments".into());
             }
@@ -70,10 +141,10 @@ fn eval_op(name: &str, args: &[Term], lit: Option<&Value>, input: Value) -> Resu
                     .as_f64()
                     .ok_or_else(|| format!("{name}: non-numeric argument"))?;
                 match name {
-                    "math.add" => result += n,
-                    "math.mul" => result *= n,
-                    "math.sub" => result -= n,
-                    "math.div" => result /= n,
+                    "add" => result += n,
+                    "mul" => result *= n,
+                    "sub" => result -= n,
+                    "div" => result /= n,
                     _ => unreachable!(),
                 }
             }
@@ -90,7 +161,7 @@ fn eval_op(name: &str, args: &[Term], lit: Option<&Value>, input: Value) -> Resu
             }
         }
 
-        "product" | "fanout" => {
+        "product" | "fn.fanout_fn" | "fanout" => {
             let mut out = Vec::with_capacity(args.len());
             for arg in args {
                 out.push(interpret(arg, input.clone())?);
@@ -135,6 +206,81 @@ fn eval_op(name: &str, args: &[Term], lit: Option<&Value>, input: Value) -> Resu
             }
         }
 
-        other => Err(format!("unsupported op: {other}")),
+        other => {
+            eprintln!("[term-interpreter] unsupported op: {other}");
+            Err(format!("unsupported op: {other}"))
+        }
     }
+}
+
+fn pair_components(value: &Value) -> Result<(Value, Value), String> {
+    if let Some(arr) = value.as_array() {
+        if arr.len() == 2 {
+            return Ok((arr[0].clone(), arr[1].clone()));
+        }
+    }
+    if let Some(obj) = value.as_object() {
+        if let Some(pair) = obj.get("__pair__").and_then(Value::as_array) {
+            if pair.len() == 2 {
+                return Ok((pair[0].clone(), pair[1].clone()));
+            }
+        }
+    }
+    Err("expected a pair (array of length 2 or __pair__)".to_string())
+}
+
+fn mk_pair(a: Value, b: Value) -> Value {
+    Value::Array(vec![a, b])
+}
+
+fn either_side(value: Value) -> Result<(&'static str, Value), String> {
+    if let Some(obj) = value.as_object() {
+        if let Some(side) = obj.get("__either__").and_then(Value::as_str) {
+            let inner = obj
+                .get("value")
+                .cloned()
+                .ok_or_else(|| "Either: missing value")?;
+            return match side {
+                "left" => Ok(("left", inner)),
+                "right" => Ok(("right", inner)),
+                _ => Err(format!("Either: unknown side {side}")),
+            };
+        }
+        if let Some(side) = obj.get("__tag__").and_then(Value::as_str) {
+            let inner = obj
+                .get("value")
+                .cloned()
+                .unwrap_or(Value::Null);
+            return match side {
+                "Left" => Ok(("left", inner)),
+                "Right" => Ok(("right", inner)),
+                _ => Err(format!("Choice: unknown tag {side}")),
+            };
+        }
+    }
+    Err("Choice: input is not an Either".to_string())
+}
+
+fn either_left_value(value: &Value) -> Option<Value> {
+    if let Some(obj) = value.as_object() {
+        if obj.get("__either__").and_then(Value::as_str) == Some("left") {
+            return obj.get("value").cloned();
+        }
+        if obj.get("__tag__").and_then(Value::as_str) == Some("Left") {
+            return obj.get("value").cloned();
+        }
+    }
+    None
+}
+
+fn either_right_value(value: &Value) -> Option<Value> {
+    if let Some(obj) = value.as_object() {
+        if obj.get("__either__").and_then(Value::as_str) == Some("right") {
+            return obj.get("value").cloned();
+        }
+        if obj.get("__tag__").and_then(Value::as_str) == Some("Right") {
+            return obj.get("value").cloned();
+        }
+    }
+    None
 }
