@@ -232,6 +232,8 @@ fn eval_op(
             }
         }
 
+        "assert" => Err("assert: keyword assertions are not supported by the arrow interpreter".into()),
+
         other => match source {
             ArrSource::Foreign(grade) => {
                 if let Some(handler) = handlers.get(grade) {
