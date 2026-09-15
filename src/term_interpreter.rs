@@ -29,7 +29,7 @@ pub fn interpret_with_handlers(
     handlers: &HashMap<String, Value>,
 ) -> Result<Value, String> {
     match term {
-        Term::Arr { value } | Term::Const { value } => Ok(value.clone()),
+        Term::Arr { dim: _, value } | Term::Const { value } => Ok(value.clone()),
 
         Term::Seq { fst, snd } => {
             let v = interpret_with_handlers(fst, input, handlers)?;
@@ -117,7 +117,7 @@ pub fn interpret_with_handlers(
             interpret_with_handlers(body, input, &handlers)
         }
 
-        Term::Op { name, args, source, lit } => {
+        Term::Op { dim: _, name, args, source, lit } => {
             eval_op(name, args, source, lit.as_ref(), input, handlers)
         }
 

@@ -26,6 +26,9 @@ pub enum Side {
 pub enum Term {
     /// Pure constant arrow (Sanada's `arr`).
     Arr {
+        /// The dimension of this arrow.
+        #[serde(default = "default_dim")]
+        dim: Box<Term>,
         /// The constant value.
         value: Value,
     },
@@ -36,6 +39,9 @@ pub enum Term {
     },
     /// Named graded operation (Sanada's `op`).
     Op {
+        /// The dimension of this arrow.
+        #[serde(default = "default_dim")]
+        dim: Box<Term>,
         /// The operator name (e.g. `"add"`, `"proj_env"`).
         name: String,
         /// The argument sub-schemes feeding the op.
@@ -125,30 +131,6 @@ pub enum Term {
         witness: RewriteWitness,
     },
 
-    /// `path (a, b) [witness]` — a path between two terms (ADR-0100).
-    Path {
-        /// The endpoints of the path.
-        endpoints: (Box<Term>, Box<Term>),
-        /// An optional witness for the path.
-        witness: Option<Box<Term>>,
-    },
-
-    /// `equiv a b [path]` — equality between two terms (ADR-0100).
-    Equiv {
-        /// The left-hand side.
-        a: Box<Term>,
-        /// The right-hand side.
-        b: Box<Term>,
-        /// An optional path witnessing the equivalence.
-        path: Option<Box<Term>>,
-    },
-
-    /// Identity of a cell in a frontier context.
-    CellId {
-        /// The arrow identifying the cell.
-        arrow: Box<Term>,
-    },
-
     /// Source face of a 2-cell.
     Src {
         /// The 2-cell value.
@@ -158,24 +140,6 @@ pub enum Term {
     /// Target face of a 2-cell.
     Tgt {
         /// The 2-cell value.
-        cell: Box<Term>,
-    },
-
-    /// Vertical cell composition.
-    CellCompV {
-        /// The first arrow.
-        first: Box<Term>,
-        /// The second arrow.
-        second: Box<Term>,
-    },
-
-    /// A whisker attaching an arrow to a cell on a side.
-    Whisker {
-        /// The side of attachment.
-        side: Side,
-        /// The arrow to attach.
-        arrow: Box<Term>,
-        /// The cell to attach to.
         cell: Box<Term>,
     },
 
@@ -203,46 +167,6 @@ pub enum Term {
         tag: String,
         /// The inner value.
         value: Box<Term>,
-    },
-
-    /// Univalence from an equivalence.
-    Univalence {
-        /// The equivalence arrow.
-        equiv: Box<Term>,
-    },
-
-    /// Glue a family along a path.
-    Glue {
-        /// The family.
-        family: Box<Term>,
-        /// The path.
-        path: Box<Term>,
-    },
-
-    /// Fibrant type former.
-    Fibrant {
-        /// The base.
-        base: Box<Term>,
-        /// The family.
-        family: Box<Term>,
-    },
-
-    /// J-elimination.
-    JElim {
-        /// The path.
-        path: Box<Term>,
-        /// The motive.
-        motive: Box<Term>,
-        /// The base.
-        base: Box<Term>,
-    },
-
-    /// Refine a sort by a predicate.
-    Refine {
-        /// The sort.
-        sort: Box<Term>,
-        /// The predicate.
-        predicate: Box<Term>,
     },
 
     /// Cobind over a grade and body.
@@ -280,10 +204,16 @@ pub enum RewriteWitness {
     Cast,
 }
 
+/// Default dimension for `Arr`/`Op` when not supplied (1).
+fn default_dim() -> Box<Term> {
+    Box::new(Term::Const { value: Value::from(1) })
+}
+
 impl Term {
     /// Convenience constructor for a pure constant arrow.
     pub fn const_value(value: impl Into<Value>) -> Self {
         Term::Arr {
+            dim: default_dim(),
             value: value.into(),
         }
     }
@@ -298,6 +228,7 @@ impl Term {
     /// Convenience constructor for a native `op` with no literal payload.
     pub fn op_native(name: impl Into<String>, args: Vec<Term>) -> Self {
         Term::Op {
+            dim: default_dim(),
             name: name.into(),
             args,
             source: ArrSource::Native,
@@ -319,6 +250,7 @@ impl Term {
     pub fn op_foreign(name: impl Into<String>, args: Vec<Term>) -> Self {
         let name = name.into();
         Term::Op {
+            dim: default_dim(),
             name: name.clone(),
             args,
             source: ArrSource::Foreign(name),
@@ -334,6 +266,7 @@ impl Term {
     /// Convenience constructor for a native `op` carrying a literal payload.
     pub fn op_native_lit(name: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
         Term::Op {
+            dim: default_dim(),
             name: name.into(),
             args,
             source: ArrSource::Native,
@@ -354,6 +287,7 @@ impl Term {
     /// Convenience constructor for a typecheck judgment `op` with no literal payload.
     pub fn op_judgment(name: impl Into<String>, args: Vec<Term>) -> Self {
         Term::Op {
+            dim: default_dim(),
             name: name.into(),
             args,
             source: ArrSource::Judgment,
@@ -373,6 +307,7 @@ impl Term {
         lit: impl Into<Value>,
     ) -> Self {
         Term::Op {
+            dim: default_dim(),
             name: name.into(),
             args,
             source: ArrSource::Judgment,
@@ -433,21 +368,25 @@ impl Term {
     }
 
     /// Recursively desugar derived surface forms into the core `Term` combinators.
+    /// Recursively desugar derived surface forms into the core `Term` combinators.
     pub fn desugar(&self) -> Term {
         match self {
             // Core forms: preserve shape and desugar children.
-            Term::Arr { value } => Term::Arr {
+            Term::Arr { dim, value } => Term::Arr {
+                dim: Box::new(dim.desugar()),
                 value: value.clone(),
             },
             Term::Const { value } => Term::Const {
                 value: value.clone(),
             },
             Term::Op {
+                dim,
                 name,
                 args,
                 source,
                 lit,
             } => Term::Op {
+                dim: Box::new(dim.desugar()),
                 name: name.clone(),
                 args: args.iter().map(Term::desugar).collect(),
                 source: source.clone(),
@@ -501,34 +440,10 @@ impl Term {
                 target: Box::new(target.desugar()),
                 witness: witness.clone(),
             },
-            Term::Path {
-                endpoints: (a, b),
-                witness,
-            } => Term::Path {
-                endpoints: (Box::new(a.desugar()), Box::new(b.desugar())),
-                witness: witness.as_ref().map(|w| Box::new(w.desugar())),
-            },
-            Term::Equiv { a, b, path } => Term::Equiv {
-                a: Box::new(a.desugar()),
-                b: Box::new(b.desugar()),
-                path: path.as_ref().map(|p| Box::new(p.desugar())),
-            },
-            Term::CellId { arrow } => Term::CellId {
-                arrow: Box::new(arrow.desugar()),
-            },
             Term::Src { cell } => Term::Src {
                 cell: Box::new(cell.desugar()),
             },
             Term::Tgt { cell } => Term::Tgt {
-                cell: Box::new(cell.desugar()),
-            },
-            Term::CellCompV { first, second } => Term::CellCompV {
-                first: Box::new(first.desugar()),
-                second: Box::new(second.desugar()),
-            },
-            Term::Whisker { side, arrow, cell } => Term::Whisker {
-                side: side.clone(),
-                arrow: Box::new(arrow.desugar()),
                 cell: Box::new(cell.desugar()),
             },
             Term::RecordProj { record, field } => Term::RecordProj {
@@ -548,26 +463,6 @@ impl Term {
                 tag: tag.clone(),
                 value: Box::new(value.desugar()),
             },
-            Term::Univalence { equiv } => Term::Univalence {
-                equiv: Box::new(equiv.desugar()),
-            },
-            Term::Glue { family, path } => Term::Glue {
-                family: Box::new(family.desugar()),
-                path: Box::new(path.desugar()),
-            },
-            Term::Fibrant { base, family } => Term::Fibrant {
-                base: Box::new(base.desugar()),
-                family: Box::new(family.desugar()),
-            },
-            Term::JElim { path, motive, base } => Term::JElim {
-                path: Box::new(path.desugar()),
-                motive: Box::new(motive.desugar()),
-                base: Box::new(base.desugar()),
-            },
-            Term::Refine { sort, predicate } => Term::Refine {
-                sort: Box::new(sort.desugar()),
-                predicate: Box::new(predicate.desugar()),
-            },
             Term::Cobind { grade, body } => Term::Cobind {
                 grade: Box::new(grade.desugar()),
                 body: Box::new(body.desugar()),
@@ -576,15 +471,18 @@ impl Term {
     }
 
     /// Eliminate every `Handle` node in this scheme.
+    /// Eliminate every `Handle` node in this scheme.
     pub fn eliminate_handlers(&self) -> Term {
         match self {
-            Term::Arr { value } => Term::Arr {
+            Term::Arr { dim, value } => Term::Arr {
+                dim: Box::new(dim.eliminate_handlers()),
                 value: value.clone(),
             },
             Term::Const { value } => Term::Const {
                 value: value.clone(),
             },
             Term::Op {
+                dim,
                 name,
                 args,
                 source,
@@ -592,6 +490,7 @@ impl Term {
             } => {
                 let new_args: Vec<Term> = args.iter().map(|a| a.eliminate_handlers()).collect();
                 Term::Op {
+                    dim: Box::new(dim.eliminate_handlers()),
                     name: name.clone(),
                     args: new_args,
                     source: source.clone(),
@@ -649,37 +548,10 @@ impl Term {
                 target: Box::new(target.eliminate_handlers()),
                 witness: witness.clone(),
             },
-            Term::Path {
-                endpoints: (a, b),
-                witness,
-            } => Term::Path {
-                endpoints: (
-                    Box::new(a.eliminate_handlers()),
-                    Box::new(b.eliminate_handlers()),
-                ),
-                witness: witness.as_ref().map(|w| Box::new(w.eliminate_handlers())),
-            },
-            Term::Equiv { a, b, path } => Term::Equiv {
-                a: Box::new(a.eliminate_handlers()),
-                b: Box::new(b.eliminate_handlers()),
-                path: path.as_ref().map(|p| Box::new(p.eliminate_handlers())),
-            },
-            Term::CellId { arrow } => Term::CellId {
-                arrow: Box::new(arrow.eliminate_handlers()),
-            },
             Term::Src { cell } => Term::Src {
                 cell: Box::new(cell.eliminate_handlers()),
             },
             Term::Tgt { cell } => Term::Tgt {
-                cell: Box::new(cell.eliminate_handlers()),
-            },
-            Term::CellCompV { first, second } => Term::CellCompV {
-                first: Box::new(first.eliminate_handlers()),
-                second: Box::new(second.eliminate_handlers()),
-            },
-            Term::Whisker { side, arrow, cell } => Term::Whisker {
-                side: side.clone(),
-                arrow: Box::new(arrow.eliminate_handlers()),
                 cell: Box::new(cell.eliminate_handlers()),
             },
             Term::RecordProj { record, field } => Term::RecordProj {
@@ -699,26 +571,6 @@ impl Term {
                 tag: tag.clone(),
                 value: Box::new(value.eliminate_handlers()),
             },
-            Term::Univalence { equiv } => Term::Univalence {
-                equiv: Box::new(equiv.eliminate_handlers()),
-            },
-            Term::Glue { family, path } => Term::Glue {
-                family: Box::new(family.eliminate_handlers()),
-                path: Box::new(path.eliminate_handlers()),
-            },
-            Term::Fibrant { base, family } => Term::Fibrant {
-                base: Box::new(base.eliminate_handlers()),
-                family: Box::new(family.eliminate_handlers()),
-            },
-            Term::JElim { path, motive, base } => Term::JElim {
-                path: Box::new(path.eliminate_handlers()),
-                motive: Box::new(motive.eliminate_handlers()),
-                base: Box::new(base.eliminate_handlers()),
-            },
-            Term::Refine { sort, predicate } => Term::Refine {
-                sort: Box::new(sort.eliminate_handlers()),
-                predicate: Box::new(predicate.eliminate_handlers()),
-            },
             Term::Cobind { grade, body } => Term::Cobind {
                 grade: Box::new(grade.eliminate_handlers()),
                 body: Box::new(body.eliminate_handlers()),
@@ -728,15 +580,18 @@ impl Term {
 }
 
 /// Substitute bare `arr(target)` references in `scheme` with `impl_`.
+/// Substitute bare `arr(target)` references in `scheme` with `impl_`.
 fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
     match scheme {
-        Term::Arr { value } => Term::Arr {
+        Term::Arr { dim, value } => Term::Arr {
+            dim: Box::new(substitute_capability(dim, target, impl_)),
             value: value.clone(),
         },
         Term::Const { value } => Term::Const {
             value: value.clone(),
         },
         Term::Op {
+            dim,
             name,
             args,
             source,
@@ -754,6 +609,7 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
                 .map(|a| substitute_capability(a, target, impl_))
                 .collect();
             Term::Op {
+                dim: Box::new(substitute_capability(dim, target, impl_)),
                 name: name.clone(),
                 args: new_args,
                 source: source.clone(),
@@ -814,41 +670,10 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             target: Box::new(substitute_capability(t, target, impl_)),
             witness: witness.clone(),
         },
-        Term::Path {
-            endpoints: (a, b),
-            witness,
-        } => Term::Path {
-            endpoints: (
-                Box::new(substitute_capability(a, target, impl_)),
-                Box::new(substitute_capability(b, target, impl_)),
-            ),
-            witness: witness
-                .as_ref()
-                .map(|w| Box::new(substitute_capability(w, target, impl_))),
-        },
-        Term::Equiv { a, b, path } => Term::Equiv {
-            a: Box::new(substitute_capability(a, target, impl_)),
-            b: Box::new(substitute_capability(b, target, impl_)),
-            path: path
-                .as_ref()
-                .map(|p| Box::new(substitute_capability(p, target, impl_))),
-        },
-        Term::CellId { arrow } => Term::CellId {
-            arrow: Box::new(substitute_capability(arrow, target, impl_)),
-        },
         Term::Src { cell } => Term::Src {
             cell: Box::new(substitute_capability(cell, target, impl_)),
         },
         Term::Tgt { cell } => Term::Tgt {
-            cell: Box::new(substitute_capability(cell, target, impl_)),
-        },
-        Term::CellCompV { first, second } => Term::CellCompV {
-            first: Box::new(substitute_capability(first, target, impl_)),
-            second: Box::new(substitute_capability(second, target, impl_)),
-        },
-        Term::Whisker { side, arrow, cell } => Term::Whisker {
-            side: side.clone(),
-            arrow: Box::new(substitute_capability(arrow, target, impl_)),
             cell: Box::new(substitute_capability(cell, target, impl_)),
         },
         Term::RecordProj { record, field } => Term::RecordProj {
@@ -867,26 +692,6 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
         Term::Tag { tag, value } => Term::Tag {
             tag: tag.clone(),
             value: Box::new(substitute_capability(value, target, impl_)),
-        },
-        Term::Univalence { equiv } => Term::Univalence {
-            equiv: Box::new(substitute_capability(equiv, target, impl_)),
-        },
-        Term::Glue { family, path } => Term::Glue {
-            family: Box::new(substitute_capability(family, target, impl_)),
-            path: Box::new(substitute_capability(path, target, impl_)),
-        },
-        Term::Fibrant { base, family } => Term::Fibrant {
-            base: Box::new(substitute_capability(base, target, impl_)),
-            family: Box::new(substitute_capability(family, target, impl_)),
-        },
-        Term::JElim { path, motive, base } => Term::JElim {
-            path: Box::new(substitute_capability(path, target, impl_)),
-            motive: Box::new(substitute_capability(motive, target, impl_)),
-            base: Box::new(substitute_capability(base, target, impl_)),
-        },
-        Term::Refine { sort, predicate } => Term::Refine {
-            sort: Box::new(substitute_capability(sort, target, impl_)),
-            predicate: Box::new(substitute_capability(predicate, target, impl_)),
         },
         Term::Cobind { grade, body } => Term::Cobind {
             grade: Box::new(substitute_capability(grade, target, impl_)),

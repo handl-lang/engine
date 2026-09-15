@@ -71,23 +71,7 @@ impl TermData {
     /// Univalence, Glue, Fibrant, JElim, Refine, Cobind, Rewrite) is matched
     /// against the `"__tag__"` field instead of the `Term` enum.
     pub fn is_hott_tag(&self) -> bool {
-        matches!(
-            self.tag(),
-            "Path"
-                | "Equiv"
-                | "CellId"
-                | "Src"
-                | "Tgt"
-                | "CellCompV"
-                | "Whisker"
-                | "Univalence"
-                | "Glue"
-                | "Fibrant"
-                | "JElim"
-                | "Refine"
-                | "Cobind"
-                | "Rewrite"
-        )
+        matches!(self.tag(), "Src" | "Tgt" | "Cobind" | "Rewrite")
     }
 
     // --- Field access ---
@@ -128,7 +112,11 @@ impl TermData {
 
     /// Construct an `Arr` (pure constant arrow).
     pub fn arr(value: impl Into<Value>) -> Self {
-        TermData(json!({ "__tag__": "Arr", "value": value.into() }))
+        TermData(json!({
+            "__tag__": "Arr",
+            "dim": json!({"__tag__": "Const", "value": 1}),
+            "value": value.into()
+        }))
     }
 
     /// Construct a `Const` (constant value).
@@ -149,6 +137,7 @@ impl TermData {
         let args_arr: Vec<Value> = args.into_iter().map(|t| t.0).collect();
         TermData(json!({
             "__tag__": "Op",
+            "dim": json!({"__tag__": "Const", "value": 1}),
             "name": name.into(),
             "args": args_arr,
             "source": arr_source_to_value(source),
@@ -378,17 +367,28 @@ impl TermData {
 /// This is the canonical conversion shared with
 /// `plugin_lib_handl::model::term_to_value`. Kept here so `plugin-engine`
 /// can convert without depending on `plugin-lib-handl`.
+/// Serialize a `Term` to the ADR-0103 tagged-record `Value` shape.
+///
+/// This is the canonical conversion shared with
+/// `plugin_lib_handl::model::term_to_value`. Kept here so `plugin-engine`
+/// can convert without depending on `plugin-lib-handl`.
 fn term_to_value(term: &Term) -> Value {
     match term {
-        Term::Arr { value } => json!({ "__tag__": "Arr", "value": value }),
+        Term::Arr { dim, value } => json!({
+            "__tag__": "Arr",
+            "dim": term_to_value(dim),
+            "value": value
+        }),
         Term::Const { value } => json!({ "__tag__": "Const", "value": value }),
         Term::Op {
+            dim,
             name,
             args,
             source,
             lit,
         } => json!({
             "__tag__": "Op",
+            "dim": term_to_value(dim),
             "name": name,
             "args": args.iter().map(term_to_value).collect::<Vec<_>>(),
             "source": arr_source_to_value(source),
@@ -442,35 +442,8 @@ fn term_to_value(term: &Term) -> Value {
             "target": term_to_value(target),
             "witness": rewrite_witness_to_value(witness)
         }),
-        Term::Path {
-            endpoints: (a, b),
-            witness,
-        } => json!({
-            "__tag__": "Path",
-            "from": term_to_value(a),
-            "to": term_to_value(b),
-            "witness": witness.as_ref().map(|w| term_to_value(w)).unwrap_or(Value::Null)
-        }),
-        Term::Equiv { a, b, path } => json!({
-            "__tag__": "Equiv",
-            "a": term_to_value(a),
-            "b": term_to_value(b),
-            "path": path.as_ref().map(|p| term_to_value(p)).unwrap_or(Value::Null)
-        }),
-        Term::CellId { arrow } => json!({ "__tag__": "CellId", "arrow": term_to_value(arrow) }),
         Term::Src { cell } => json!({ "__tag__": "Src", "cell": term_to_value(cell) }),
         Term::Tgt { cell } => json!({ "__tag__": "Tgt", "cell": term_to_value(cell) }),
-        Term::CellCompV { first, second } => json!({
-            "__tag__": "CellCompV",
-            "first": term_to_value(first),
-            "second": term_to_value(second)
-        }),
-        Term::Whisker { side, arrow, cell } => json!({
-            "__tag__": "Whisker",
-            "side": side_to_value(side),
-            "arrow": term_to_value(arrow),
-            "cell": term_to_value(cell)
-        }),
         Term::RecordProj { record, field } => json!({
             "__tag__": "RecordProj",
             "record": term_to_value(record),
@@ -489,26 +462,6 @@ fn term_to_value(term: &Term) -> Value {
         Term::Tag { tag, value } => {
             json!({ "__tag__": "Tag", "tag": tag, "value": term_to_value(value) })
         }
-        Term::Univalence { equiv } => {
-            json!({ "__tag__": "Univalence", "equiv": term_to_value(equiv) })
-        }
-        Term::Glue { family, path } => {
-            json!({ "__tag__": "Glue", "family": term_to_value(family), "path": term_to_value(path) })
-        }
-        Term::Fibrant { base, family } => {
-            json!({ "__tag__": "Fibrant", "base": term_to_value(base), "family": term_to_value(family) })
-        }
-        Term::JElim { path, motive, base } => json!({
-            "__tag__": "JElim",
-            "path": term_to_value(path),
-            "motive": term_to_value(motive),
-            "base": term_to_value(base)
-        }),
-        Term::Refine { sort, predicate } => json!({
-            "__tag__": "Refine",
-            "sort": term_to_value(sort),
-            "predicate": term_to_value(predicate)
-        }),
         Term::Cobind { grade, body } => {
             json!({ "__tag__": "Cobind", "grade": term_to_value(grade), "body": term_to_value(body) })
         }
@@ -546,6 +499,7 @@ fn side_to_value(side: &Side) -> Value {
 // --- Reverse conversion helpers ---
 
 /// Parse an ADR-0103 tagged-record `Value` back into a `Term`.
+/// Parse an ADR-0103 tagged-record `Value` back into a `Term`.
 fn value_to_term(value: &Value) -> Result<Term, String> {
     let tag = value
         .get("__tag__")
@@ -553,12 +507,14 @@ fn value_to_term(value: &Value) -> Result<Term, String> {
         .ok_or_else(|| "TermData is not a tagged record (missing __tag__)".to_string())?;
     match tag {
         "Arr" => Ok(Term::Arr {
+            dim: value_to_dim(value)?,
             value: field(value, "value")?,
         }),
         "Const" => Ok(Term::Const {
             value: field(value, "value")?,
         }),
         "Op" => Ok(Term::Op {
+            dim: value_to_dim(value)?,
             name: field_str(value, "name")?.to_string(),
             args: field_term_list(value, "args")?,
             source: value_to_arr_source(value.get("source"))?,
@@ -604,40 +560,10 @@ fn value_to_term(value: &Value) -> Result<Term, String> {
             target: Box::new(field_term(value, "target")?),
             witness: value_to_rewrite_witness(value.get("witness"))?,
         }),
-        "Path" => Ok(Term::Path {
-            endpoints: (
-                Box::new(field_term(value, "from")?),
-                Box::new(field_term(value, "to")?),
-            ),
-            witness: match value.get("witness") {
-                Some(Value::Null) | None => None,
-                Some(v) => Some(Box::new(value_to_term(v)?)),
-            },
-        }),
-        "Equiv" => Ok(Term::Equiv {
-            a: Box::new(field_term(value, "a")?),
-            b: Box::new(field_term(value, "b")?),
-            path: match value.get("path") {
-                Some(Value::Null) | None => None,
-                Some(v) => Some(Box::new(value_to_term(v)?)),
-            },
-        }),
-        "CellId" => Ok(Term::CellId {
-            arrow: Box::new(field_term(value, "arrow")?),
-        }),
         "Src" => Ok(Term::Src {
             cell: Box::new(field_term(value, "cell")?),
         }),
         "Tgt" => Ok(Term::Tgt {
-            cell: Box::new(field_term(value, "cell")?),
-        }),
-        "CellCompV" => Ok(Term::CellCompV {
-            first: Box::new(field_term(value, "first")?),
-            second: Box::new(field_term(value, "second")?),
-        }),
-        "Whisker" => Ok(Term::Whisker {
-            side: value_to_side(value.get("side"))?,
-            arrow: Box::new(field_term(value, "arrow")?),
             cell: Box::new(field_term(value, "cell")?),
         }),
         "RecordProj" => Ok(Term::RecordProj {
@@ -653,31 +579,18 @@ fn value_to_term(value: &Value) -> Result<Term, String> {
             tag: field_str(value, "tag")?.to_string(),
             value: Box::new(field_term(value, "value")?),
         }),
-        "Univalence" => Ok(Term::Univalence {
-            equiv: Box::new(field_term(value, "equiv")?),
-        }),
-        "Glue" => Ok(Term::Glue {
-            family: Box::new(field_term(value, "family")?),
-            path: Box::new(field_term(value, "path")?),
-        }),
-        "Fibrant" => Ok(Term::Fibrant {
-            base: Box::new(field_term(value, "base")?),
-            family: Box::new(field_term(value, "family")?),
-        }),
-        "JElim" => Ok(Term::JElim {
-            path: Box::new(field_term(value, "path")?),
-            motive: Box::new(field_term(value, "motive")?),
-            base: Box::new(field_term(value, "base")?),
-        }),
-        "Refine" => Ok(Term::Refine {
-            sort: Box::new(field_term(value, "sort")?),
-            predicate: Box::new(field_term(value, "predicate")?),
-        }),
         "Cobind" => Ok(Term::Cobind {
             grade: Box::new(field_term(value, "grade")?),
             body: Box::new(field_term(value, "body")?),
         }),
         other => Err(format!("unknown tag: {other}")),
+    }
+}
+
+fn value_to_dim(value: &Value) -> Result<Box<Term>, String> {
+    match value.get("dim") {
+        Some(Value::Null) | None => Ok(Box::new(Term::Const { value: Value::from(1) })),
+        Some(v) => value_to_term(v).map(Box::new),
     }
 }
 
