@@ -589,7 +589,9 @@ fn value_to_term(value: &Value) -> Result<Term, String> {
 
 fn value_to_dim(value: &Value) -> Result<Box<Term>, String> {
     match value.get("dim") {
-        Some(Value::Null) | None => Ok(Box::new(Term::Const { value: Value::from(1) })),
+        Some(Value::Null) | None => Ok(Box::new(Term::Const {
+            value: Value::from(1),
+        })),
         Some(v) => value_to_term(v).map(Box::new),
     }
 }

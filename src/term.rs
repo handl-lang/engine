@@ -206,7 +206,9 @@ pub enum RewriteWitness {
 
 /// Default dimension for `Arr`/`Op` when not supplied (1).
 fn default_dim_value() -> Box<Term> {
-    Box::new(Term::Const { value: Value::from(1) })
+    Box::new(Term::Const {
+        value: Value::from(1),
+    })
 }
 
 impl Term {

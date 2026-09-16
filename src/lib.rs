@@ -6,11 +6,11 @@ pub mod term;
 pub mod term_data;
 pub mod term_interpreter;
 
-pub use term_interpreter::interpret;
 pub use term::{
     ArrSource, RewriteWitness, Side, Term, eliminate_all_handlers, eliminate_handler_in_scheme,
 };
 pub use term_data::TermData;
+pub use term_interpreter::interpret;
 
 /// A reference to a node in an AST arena.
 ///

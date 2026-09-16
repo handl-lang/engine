@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use serde_json::{from_value, Map, Number, Value};
+use serde_json::{Map, Number, Value, from_value};
 
 use crate::{ArrSource, Term};
 
@@ -100,9 +100,7 @@ pub fn interpret_with_handlers(
             // String callees are host-function names; the small interpreter
             // has no registry, so report it clearly.
             if callee_val.as_str().is_some() {
-                eprintln!(
-                    "[term-interpreter] Term::App: host-function callees are not supported"
-                );
+                eprintln!("[term-interpreter] Term::App: host-function callees are not supported");
                 return Err("App: host-function callees are not supported".to_string());
             }
 
@@ -110,16 +108,24 @@ pub fn interpret_with_handlers(
             Err("App: callee is not an arrow value".to_string())
         }
 
-        Term::Handle { body, target, impl_ } => {
+        Term::Handle {
+            body,
+            target,
+            impl_,
+        } => {
             let handler_val = interpret_with_handlers(impl_, Value::Null, handlers)?;
             let mut handlers = handlers.clone();
             handlers.insert(target.clone(), handler_val);
             interpret_with_handlers(body, input, &handlers)
         }
 
-        Term::Op { dim: _, name, args, source, lit } => {
-            eval_op(name, args, source, lit.as_ref(), input, handlers)
-        }
+        Term::Op {
+            dim: _,
+            name,
+            args,
+            source,
+            lit,
+        } => eval_op(name, args, source, lit.as_ref(), input, handlers),
 
         other => {
             eprintln!("[term-interpreter] unsupported Term: {other:?}");
@@ -140,9 +146,9 @@ fn eval_op(
         "id" => Ok(input),
 
         "proj_child" => {
-            let idx = lit
-                .and_then(Value::as_u64)
-                .ok_or_else(|| "proj_child: missing integer literal")? as usize;
+            let idx =
+                lit.and_then(Value::as_u64)
+                    .ok_or_else(|| "proj_child: missing integer literal")? as usize;
             input
                 .as_array()
                 .and_then(|a| a.get(idx).cloned())
@@ -175,10 +181,7 @@ fn eval_op(
                 }
             }
             // Preserve integers when the result is whole.
-            if result == result.trunc()
-                && result <= i64::MAX as f64
-                && result >= i64::MIN as f64
-            {
+            if result == result.trunc() && result <= i64::MAX as f64 && result >= i64::MIN as f64 {
                 Ok(Value::Number(Number::from(result as i64)))
             } else {
                 Number::from_f64(result)
@@ -207,15 +210,16 @@ fn eval_op(
                 let key = keys[i]
                     .as_str()
                     .ok_or_else(|| "record: key is not a string")?;
-                obj.insert(key.to_string(), interpret_with_handlers(arg, input.clone(), handlers)?);
+                obj.insert(
+                    key.to_string(),
+                    interpret_with_handlers(arg, input.clone(), handlers)?,
+                );
             }
             Ok(Value::Object(obj))
         }
 
         "field_access" => {
-            let target = args
-                .first()
-                .ok_or_else(|| "field_access: missing target")?;
+            let target = args.first().ok_or_else(|| "field_access: missing target")?;
             let v = interpret_with_handlers(target, input, handlers)?;
             match lit {
                 Some(Value::Number(n)) if n.is_u64() => {
@@ -232,7 +236,9 @@ fn eval_op(
             }
         }
 
-        "assert" => Err("assert: keyword assertions are not supported by the arrow interpreter".into()),
+        "assert" => {
+            Err("assert: keyword assertions are not supported by the arrow interpreter".into())
+        }
 
         other => match source {
             ArrSource::Foreign(grade) => {
@@ -288,10 +294,7 @@ fn either_side(value: Value) -> Result<(&'static str, Value), String> {
             };
         }
         if let Some(side) = obj.get("__tag__").and_then(Value::as_str) {
-            let inner = obj
-                .get("value")
-                .cloned()
-                .unwrap_or(Value::Null);
+            let inner = obj.get("value").cloned().unwrap_or(Value::Null);
             return match side {
                 "Left" => Ok(("left", inner)),
                 "Right" => Ok(("right", inner)),
