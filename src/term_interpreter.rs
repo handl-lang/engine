@@ -31,9 +31,19 @@ pub fn interpret_with_handlers(
     match term {
         Term::Arr { dim: _, value } | Term::Const { value } => Ok(value.clone()),
 
-        Term::Seq { fst, snd } => {
-            let v = interpret_with_handlers(fst, input, handlers)?;
-            interpret_with_handlers(snd, v, handlers)
+        Term::Seq { axis, fst, snd } => {
+            // ADR-0120 Phase 2: `>>>` is `>>>[0]`. Axis 0 keeps sequential
+            // execution; higher axes are carried structurally — multi-axis
+            // execution is a later increment, so they fall back here.
+            match seq_axis_index(axis, &input, handlers)? {
+                0 => {
+                    let v = interpret_with_handlers(fst, input, handlers)?;
+                    interpret_with_handlers(snd, v, handlers)
+                }
+                k => Err(format!(
+                    "Seq: axis-{k} composition is not yet implemented (ADR-0120 Phase 2)"
+                )),
+            }
         }
 
         Term::First { inner } => {
@@ -154,6 +164,24 @@ pub fn interpret_with_handlers(
             Err(format!("unsupported Term: {other:?}"))
         }
     }
+}
+
+/// Resolve a `Seq` axis slot to its concrete axis index.
+///
+/// Literal axes (`Const n`/`Arr n`) resolve directly; compound axis terms
+/// are evaluated as expressions against the incoming value. A non-numeric
+/// result is a structural error — the axis is a natural-number position.
+fn seq_axis_index(
+    axis: &Term,
+    input: &Value,
+    handlers: &HashMap<String, Value>,
+) -> Result<u64, String> {
+    if let Some(k) = axis.nat_literal() {
+        return Ok(k);
+    }
+    let v = interpret_with_handlers(axis, input.clone(), handlers)?;
+    v.as_u64()
+        .ok_or_else(|| format!("Seq: axis expression evaluated to a non-natural value: {v}"))
 }
 
 fn eval_op(

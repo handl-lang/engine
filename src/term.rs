@@ -56,8 +56,17 @@ pub enum Term {
         lit: Option<Value>,
     },
 
-    /// `>>>` — sequential composition.
+    /// `>>>[k]` — composition along axis `k` (ADR-0120 Phase 2).
+    ///
+    /// `axis` is an ordinary expression position holding the composition
+    /// axis: `>>>` is `>>>[0]` (sequential composition of 1-cells) and
+    /// `>>>[k]` composes along the k-th globular axis. Execution semantics
+    /// are currently defined for axis 0; higher axes are carried and
+    /// validated structurally pending the multi-axis execution increment.
     Seq {
+        /// The composition axis (`0` for ordinary `>>>`).
+        #[serde(default = "default_axis_value")]
+        axis: Box<Term>,
         /// The first arrow; its output feeds `snd`.
         fst: Box<Term>,
         /// The second arrow; fed by `fst`'s output.
@@ -211,10 +220,41 @@ fn default_dim_value() -> Box<Term> {
     })
 }
 
+/// Default composition axis for `Seq` when not supplied (0 — ordinary `>>>`).
+fn default_axis_value() -> Box<Term> {
+    Box::new(Term::Const {
+        value: Value::from(0),
+    })
+}
+
 impl Term {
     /// The default dimension (1) for `Arr`/`Op` when not supplied.
     pub fn default_dim() -> Box<Term> {
         default_dim_value()
+    }
+
+    /// The default composition axis (0) for `Seq` when not supplied.
+    pub fn default_axis() -> Box<Term> {
+        default_axis_value()
+    }
+
+    /// Whether this term is the default composition axis (literal `0`).
+    pub fn is_default_axis(&self) -> bool {
+        self.nat_literal() == Some(0)
+    }
+
+    /// Resolve this term as a natural-number literal, if it is one.
+    ///
+    /// Recognizes the literal positions used for dimension/axis slots:
+    /// `Const n` and `Arr n` where `n` is a non-negative integer.
+    /// Returns `None` for compound expressions (ops, apps, …).
+    pub fn nat_literal(&self) -> Option<u64> {
+        match self {
+            Term::Const { value } | Term::Arr { value, .. } => value
+                .as_u64()
+                .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok())),
+            _ => None,
+        }
     }
 
     /// Convenience constructor for a pure constant arrow.
@@ -327,9 +367,22 @@ impl Term {
         Term::op_judgment_lit(op, args, lit)
     }
 
-    /// Convenience constructor for `>>>` (sequential composition).
+    /// Convenience constructor for `>>>` — `>>>[0]` sequential composition.
     pub fn seq(fst: Term, snd: Term) -> Self {
         Term::Seq {
+            axis: Self::default_axis(),
+            fst: Box::new(fst),
+            snd: Box::new(snd),
+        }
+    }
+
+    /// Convenience constructor for `>>>[k]` — composition along axis `k`.
+    ///
+    /// `axis` is an ordinary expression position (literal, variable, or
+    /// compound term). Callers pass `Term::seq(f, g)` for `>>>[0]`.
+    pub fn seq_axis(axis: Term, fst: Term, snd: Term) -> Self {
+        Term::Seq {
+            axis: Box::new(axis),
             fst: Box::new(fst),
             snd: Box::new(snd),
         }
@@ -399,7 +452,8 @@ impl Term {
                 source: source.clone(),
                 lit: lit.clone(),
             },
-            Term::Seq { fst, snd } => Term::Seq {
+            Term::Seq { axis, fst, snd } => Term::Seq {
+                axis: Box::new(axis.desugar()),
                 fst: Box::new(fst.desugar()),
                 snd: Box::new(snd.desugar()),
             },
@@ -516,7 +570,8 @@ impl Term {
                 initial: Box::new(initial.eliminate_handlers()),
             },
             Term::Child { role } => Term::Child { role: role.clone() },
-            Term::Seq { fst, snd } => Term::Seq {
+            Term::Seq { axis, fst, snd } => Term::Seq {
+                axis: Box::new(axis.eliminate_handlers()),
                 fst: Box::new(fst.eliminate_handlers()),
                 snd: Box::new(snd.eliminate_handlers()),
             },
@@ -623,7 +678,8 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
                 lit: lit.clone(),
             }
         }
-        Term::Seq { fst, snd } => Term::Seq {
+        Term::Seq { axis, fst, snd } => Term::Seq {
+            axis: Box::new(substitute_capability(axis, target, impl_)),
             fst: Box::new(substitute_capability(fst, target, impl_)),
             snd: Box::new(substitute_capability(snd, target, impl_)),
         },

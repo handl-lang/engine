@@ -116,6 +116,25 @@ impl TermData {
             .unwrap_or_default()
     }
 
+    /// Resolve this record as a natural-number literal (`Const n` / `Arr n`),
+    /// matching [`Term::nat_literal`]. Used for `Seq` axis slots.
+    pub fn nat_literal(&self) -> Option<u64> {
+        let value = self.0.get("value")?;
+        if !matches!(self.tag(), "Const" | "Arr") {
+            return None;
+        }
+        value
+            .as_u64()
+            .or_else(|| value.as_i64().and_then(|n| u64::try_from(n).ok()))
+    }
+
+    /// The `axis` slot of a `Seq` record as a `TermData`, defaulting to the
+    /// `Const 0` record when the field is absent (pre-Phase-2 records).
+    pub fn axis(&self) -> TermData {
+        self.get_term("axis")
+            .unwrap_or_else(|| TermData(json!({"__tag__": "Const", "value": 0})))
+    }
+
     /// For an `Op` term, parse the `source` field back into an [`ArrSource`].
     ///
     /// Returns `None` when the `source` field is absent or malformed (which
@@ -161,9 +180,24 @@ impl TermData {
         }))
     }
 
-    /// Construct a `Seq` (sequential composition).
+    /// Construct a `Seq` (sequential composition, `>>>[0]`).
     pub fn seq(fst: TermData, snd: TermData) -> Self {
-        TermData(json!({ "__tag__": "Seq", "fst": fst.0, "snd": snd.0 }))
+        TermData(json!({
+            "__tag__": "Seq",
+            "axis": json!({"__tag__": "Const", "value": 0}),
+            "fst": fst.0,
+            "snd": snd.0
+        }))
+    }
+
+    /// Construct a `Seq` composing along `axis` (`>>>[k]`, ADR-0120 Phase 2).
+    pub fn seq_axis(axis: TermData, fst: TermData, snd: TermData) -> Self {
+        TermData(json!({
+            "__tag__": "Seq",
+            "axis": axis.0,
+            "fst": fst.0,
+            "snd": snd.0
+        }))
     }
 
     /// Construct a `First` (fan-out on first component).
@@ -410,8 +444,9 @@ fn term_to_value(term: &Term) -> Value {
             "source": arr_source_to_value(source),
             "lit": lit.as_ref().cloned().unwrap_or(Value::Null)
         }),
-        Term::Seq { fst, snd } => json!({
+        Term::Seq { axis, fst, snd } => json!({
             "__tag__": "Seq",
+            "axis": term_to_value(axis),
             "fst": term_to_value(fst),
             "snd": term_to_value(snd)
         }),
@@ -540,6 +575,7 @@ fn value_to_term(value: &Value) -> Result<Term, String> {
             },
         }),
         "Seq" => Ok(Term::Seq {
+            axis: value_to_axis(value)?,
             fst: Box::new(field_term(value, "fst")?),
             snd: Box::new(field_term(value, "snd")?),
         }),
@@ -607,6 +643,17 @@ fn value_to_dim(value: &Value) -> Result<Box<Term>, String> {
     match value.get("dim") {
         Some(Value::Null) | None => Ok(Box::new(Term::Const {
             value: Value::from(1),
+        })),
+        Some(v) => value_to_term(v).map(Box::new),
+    }
+}
+
+/// Parse the `axis` field of a `Seq` record, defaulting to `0` when absent
+/// so serialized `Seq`s written before ADR-0120 Phase 2 keep decoding.
+fn value_to_axis(value: &Value) -> Result<Box<Term>, String> {
+    match value.get("axis") {
+        Some(Value::Null) | None => Ok(Box::new(Term::Const {
+            value: Value::from(0),
         })),
         Some(v) => value_to_term(v).map(Box::new),
     }
