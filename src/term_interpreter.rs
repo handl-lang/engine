@@ -155,6 +155,55 @@ fn eval_op(
                 .ok_or_else(|| "proj_child: index out of bounds".into())
         }
 
+        "eq" => {
+            if args.len() != 2 {
+                return Err("eq: expected two arguments".into());
+            }
+            let l = interpret_with_handlers(&args[0], input.clone(), handlers)?;
+            let r = interpret_with_handlers(&args[1], input.clone(), handlers)?;
+            Ok(Value::Bool(l == r))
+        }
+
+        "gt" | "gte" | "lt" | "lte" => {
+            if args.len() != 2 {
+                return Err(format!("{name}: expected two arguments"));
+            }
+            let l = interpret_with_handlers(&args[0], input.clone(), handlers)?;
+            let r = interpret_with_handlers(&args[1], input.clone(), handlers)?;
+            let l = l
+                .as_f64()
+                .ok_or_else(|| format!("{name}: non-numeric argument"))?;
+            let r = r
+                .as_f64()
+                .ok_or_else(|| format!("{name}: non-numeric argument"))?;
+            let result = match name {
+                "gt" => l > r,
+                "gte" => l >= r,
+                "lt" => l < r,
+                "lte" => l <= r,
+                _ => unreachable!(),
+            };
+            Ok(Value::Bool(result))
+        }
+
+        "and" | "or" => {
+            if args.is_empty() {
+                return Err(format!("{name}: expected at least one argument"));
+            }
+            let mut iter = args.iter();
+            let first = interpret_with_handlers(iter.next().unwrap(), input.clone(), handlers)?;
+            let mut acc = is_truthy(&first);
+            for arg in iter {
+                let v = interpret_with_handlers(arg, input.clone(), handlers)?;
+                match name {
+                    "and" => acc = acc && is_truthy(&v),
+                    "or" => acc = acc || is_truthy(&v),
+                    _ => unreachable!(),
+                }
+            }
+            Ok(Value::Bool(acc))
+        }
+
         "add" | "mul" | "sub" | "div" => {
             if args.is_empty() {
                 return Err("math op: no arguments".into());
@@ -190,7 +239,24 @@ fn eval_op(
             }
         }
 
-        "product" | "fn.fanout_fn" | "fanout" => {
+        "json" => {
+            // ADR-0060 template substitution: args evaluate to values that
+            // replace `$i` holes in the template literal, then the result
+            // string parses as JSON.
+            let template = lit
+                .and_then(Value::as_str)
+                .ok_or_else(|| "json: missing template literal".to_string())?;
+            let mut s = template.to_string();
+            for (i, arg) in args.iter().enumerate() {
+                let v = interpret_with_handlers(arg, input.clone(), handlers)?;
+                let replacement =
+                    serde_json::to_string(&v).map_err(|e| format!("json: serialize arg: {e}"))?;
+                s = s.replace(&format!("${i}"), &replacement);
+            }
+            serde_json::from_str::<Value>(&s).map_err(|e| format!("json: parse error: {e}"))
+        }
+
+        "product" | "fn.fanout_fn" | "fanout" | "array" => {
             let mut out = Vec::with_capacity(args.len());
             for arg in args {
                 out.push(interpret_with_handlers(arg, input.clone(), handlers)?);
@@ -234,6 +300,14 @@ fn eval_op(
                     .ok_or_else(|| format!("field_access: no field {s}")),
                 _ => Err("field_access: missing/unsupported field literal".into()),
             }
+        }
+
+        "tag" => {
+            let side = if is_truthy(&input) { "left" } else { "right" };
+            let mut obj = Map::new();
+            obj.insert("__either__".to_string(), Value::String(side.to_string()));
+            obj.insert("value".to_string(), input);
+            Ok(Value::Object(obj))
         }
 
         "assert" => {
@@ -315,6 +389,15 @@ fn either_left_value(value: &Value) -> Option<Value> {
         }
     }
     None
+}
+
+fn is_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null | Value::Bool(false) => false,
+        Value::Number(n) => n.as_f64().map_or(false, |f| f != 0.0),
+        Value::String(s) => !s.is_empty(),
+        _ => true,
+    }
 }
 
 fn either_right_value(value: &Value) -> Option<Value> {
