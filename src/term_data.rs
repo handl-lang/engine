@@ -71,7 +71,23 @@ impl TermData {
     /// Univalence, Glue, Fibrant, JElim, Refine, Cobind, Rewrite) is matched
     /// against the `"__tag__"` field instead of the `Term` enum.
     pub fn is_hott_tag(&self) -> bool {
-        matches!(self.tag(), "Src" | "Tgt" | "Cobind" | "Rewrite")
+        matches!(
+            self.tag(),
+            "Path"
+                | "Equiv"
+                | "CellId"
+                | "Src"
+                | "Tgt"
+                | "CellCompV"
+                | "Whisker"
+                | "Univalence"
+                | "Glue"
+                | "Fibrant"
+                | "JElim"
+                | "Refine"
+                | "Cobind"
+                | "Rewrite"
+        )
     }
 
     // --- Field access ---

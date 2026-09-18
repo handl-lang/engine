@@ -92,6 +92,28 @@ pub fn interpret_with_handlers(
 
             let callee_val = interpret_with_handlers(callee, input, handlers)?;
 
+            // Bound-arrow record `{"__term__": <Term>, "__bound__": [v..]}`:
+            // a frozen partial application — `__term__` runs on the
+            // concatenation of `__bound__` and this call's arguments.
+            if let Some(obj) = callee_val.as_object() {
+                if let (Some(term_val), Some(Value::Array(bound))) =
+                    (obj.get("__term__"), obj.get("__bound__"))
+                {
+                    if let Ok(scheme) = from_value::<Term>(term_val.clone()) {
+                        let mut full_input = bound.clone();
+                        match arg_input {
+                            Value::Array(vals) => full_input.extend(vals),
+                            v => full_input.push(v),
+                        }
+                        return interpret_with_handlers(
+                            &scheme,
+                            Value::Array(full_input),
+                            handlers,
+                        );
+                    }
+                }
+            }
+
             // If the callee evaluates to a `Term` value, run it.
             if let Ok(scheme) = from_value::<Term>(callee_val.clone()) {
                 return interpret_with_handlers(&scheme, arg_input, handlers);
@@ -307,6 +329,19 @@ fn eval_op(
             let mut obj = Map::new();
             obj.insert("__either__".to_string(), Value::String(side.to_string()));
             obj.insert("value".to_string(), input);
+            Ok(Value::Object(obj))
+        }
+
+        // `pair_tag` — `if` lowering: the input is a pair `[cond, v]`; the
+        // output is `left(v)` when `cond` is truthy, `right(v)` otherwise,
+        // so `Choice(then, else)` branches see the original input `v`,
+        // not the condition result.
+        "pair_tag" => {
+            let (cond, v) = pair_components(&input)?;
+            let side = if is_truthy(&cond) { "left" } else { "right" };
+            let mut obj = Map::new();
+            obj.insert("__either__".to_string(), Value::String(side.to_string()));
+            obj.insert("value".to_string(), v);
             Ok(Value::Object(obj))
         }
 
