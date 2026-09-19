@@ -26,7 +26,11 @@ pub enum Side {
 pub enum Term {
     /// Pure constant arrow (Sanada's `arr`).
     Arr {
-        /// The dimension of this arrow.
+        /// The dimension of this arrow (ADR-0119 §3, ADR-0120 Phase 3).
+        ///
+        /// The single dimension/grade slot shared with [`Term::Op`]:
+        /// `Const(n)` is a numeric dimension (`~[n]~>`) and `Const("S")`
+        /// is a *named* dimension (formerly a "grade").
         #[serde(default = "default_dim_value")]
         dim: Box<Term>,
         /// The constant value.
@@ -39,7 +43,16 @@ pub enum Term {
     },
     /// Named graded operation (Sanada's `op`).
     Op {
-        /// The dimension of this arrow.
+        /// The dimension of this arrow (ADR-0119 §3, ADR-0120 Phase 3).
+        ///
+        /// `dim` is the single dimension/grade slot: a literal `Const(n)` is
+        /// a numeric dimension (`~[n]~>`) and a literal `Const("S")` is a
+        /// *named* dimension — what the graded-effect surface called a
+        /// "grade". Handler dispatch resolves the label via
+        /// [`Term::dim_label`] so an op at dimension `S` reaches the
+        /// handler covering `S`. This is distinct from
+        /// [`ArrSource::Foreign`], which is the host-function boundary
+        /// (a module-registry key), not a dimension.
         #[serde(default = "default_dim_value")]
         dim: Box<Term>,
         /// The operator name (e.g. `"add"`, `"proj_env"`).
@@ -188,6 +201,12 @@ pub enum Term {
 }
 
 /// Whether an `Op` is a native pure function or a foreign host call.
+///
+/// `Foreign(name)` is the **host-function boundary**: `name` is a
+/// module-registry key (`modules.lookup`, `Instr::Ffi`, FFI/dlsym) and a
+/// capability name (`capabilities::foreign_names`). It is *not* a
+/// dimension — effect grades/dimensions live in `Op::dim` (ADR-0120
+/// Phase 3); the graded-op lowering no longer emits `Foreign(grade)`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ArrSource {
     /// A native pure op.
@@ -257,6 +276,22 @@ impl Term {
         }
     }
 
+    /// Resolve this term as a *named* dimension label, if it is one
+    /// (ADR-0120 Phase 3).
+    ///
+    /// A dimension term is an ordinary `Term`; the literal positions
+    /// `Const "S"` and `Arr "S"` denote the named dimension `S` — the
+    /// surface `~[S]~>` and, equivalently, what the graded-effect
+    /// surface called a grade. Numeric literals and compound dimension
+    /// expressions return `None`: they are unnamed dimensions, not
+    /// handler-routing labels.
+    pub fn dim_label(&self) -> Option<String> {
+        match self {
+            Term::Const { value } | Term::Arr { value, .. } => value.as_str().map(str::to_string),
+            _ => None,
+        }
+    }
+
     /// Convenience constructor for a pure constant arrow.
     pub fn const_value(value: impl Into<Value>) -> Self {
         Term::Arr {
@@ -269,6 +304,17 @@ impl Term {
     pub fn constant(value: impl Into<Value>) -> Self {
         Term::Const {
             value: value.into(),
+        }
+    }
+
+    /// Convenience constructor for a *named* dimension term (`Const "S"`).
+    ///
+    /// Used as the `dim` slot of `Arr`/`Op` when an arrow or operation
+    /// lives at a named dimension — the unified grade/dimension slot
+    /// (ADR-0120 Phase 3).
+    pub fn named_dim(label: impl Into<String>) -> Self {
+        Term::Const {
+            value: Value::String(label.into()),
         }
     }
 
@@ -290,6 +336,21 @@ impl Term {
             Term::const_value(Value::Null)
         } else {
             Term::op_native(op, args)
+        }
+    }
+
+    /// Convenience constructor for a native `op` at an explicit dimension.
+    ///
+    /// `dim` is an ordinary `Term` dimension slot — `Term::constant(n)` for
+    /// a numeric dimension, [`Term::named_dim`] for a named dimension/grade
+    /// (ADR-0120 Phase 3).
+    pub fn op_native_dim(name: impl Into<String>, dim: Term, args: Vec<Term>) -> Self {
+        Term::Op {
+            dim: Box::new(dim),
+            name: name.into(),
+            args,
+            source: ArrSource::Native,
+            lit: None,
         }
     }
 
@@ -642,7 +703,11 @@ impl Term {
 }
 
 /// Substitute bare `arr(target)` references in `scheme` with `impl_`.
-/// Substitute bare `arr(target)` references in `scheme` with `impl_`.
+///
+/// An `Op` is a reference to the handled boundary `target` when (a) its
+/// `name` is `target`, (b) its host boundary `Foreign(n)` is `target`, or
+/// (c) its `dim` resolves to the named dimension `target` (ADR-0120
+/// Phase 3: `handle S with impl` substitutes every op *at dimension* `S`).
 fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
     match scheme {
         Term::Arr { dim, value } => Term::Arr {
@@ -659,9 +724,11 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             source,
             lit,
         } => {
-            if name == target && args.is_empty() && lit.is_none() {
+            if args.is_empty() && lit.is_none() {
+                let at_target_dim = dim.dim_label().as_deref() == Some(target);
                 match source {
-                    ArrSource::Native => return impl_.clone(),
+                    _ if at_target_dim => return impl_.clone(),
+                    ArrSource::Native if name == target => return impl_.clone(),
                     ArrSource::Foreign(n) if n == target => return impl_.clone(),
                     _ => {}
                 }

@@ -55,13 +55,16 @@ pub trait LanguageView {
     ///
     /// An `op` value is a tagged record
     /// `{"__tag__": "op", "name": ..., "inputs": ..., "output": ...,
-    /// "grade": ...}`.
+    /// "grade": ...}` where `grade` is the op's *named dimension* — the
+    /// value-level spelling of `Op.dim` (ADR-0120 Phase 3).
     fn op_decl(&self, name: &str) -> Option<serde_json::Value>;
 
     /// The first `handler` value whose `grades` list contains `grade`, if any.
     ///
-    /// A handler value is a tagged record
-    /// `{"__tag__": "Handler", "grades": [...], "impls": {...}}`.
+    /// `grade` is a *named dimension* label — the key is dimension-typed
+    /// (ADR-0120 Phase 3). A handler value is a tagged record
+    /// `{"__tag__": "Handler", "grades": [...], "impls": {...}}` whose
+    /// `grades` list is the set of named dimensions it interprets.
     fn handler_for_grade(&self, grade: &str) -> Option<serde_json::Value>;
 
     /// The declared law `source ~> target` for `name`, if any.

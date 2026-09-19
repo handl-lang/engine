@@ -152,12 +152,12 @@ pub fn interpret_with_handlers(
         }
 
         Term::Op {
-            dim: _,
+            dim,
             name,
             args,
             source,
             lit,
-        } => eval_op(name, args, source, lit.as_ref(), input, handlers),
+        } => eval_op(name, dim, args, source, lit.as_ref(), input, handlers),
 
         other => {
             eprintln!("[term-interpreter] unsupported Term: {other:?}");
@@ -186,6 +186,7 @@ fn seq_axis_index(
 
 fn eval_op(
     name: &str,
+    dim: &Term,
     args: &[Term],
     source: &ArrSource,
     lit: Option<&Value>,
@@ -377,23 +378,47 @@ fn eval_op(
             Err("assert: keyword assertions are not supported by the arrow interpreter".into())
         }
 
-        other => match source {
-            ArrSource::Foreign(grade) => {
-                if let Some(handler) = handlers.get(grade) {
-                    if let Some(op) = handler.get(other) {
+        other => {
+            // Dimension-typed handler dispatch (ADR-0120 Phase 3): the
+            // routing boundary is the op's *evaluated* `dim` — a named
+            // dimension `Const "S"` IS a grade. Fallback order keeps
+            // legacy shapes working: the host boundary `Foreign(name)`
+            // is a boundary key too (module-registry name), and a bare
+            // op name is its own dimension-1 label.
+            let foreign_name = match source {
+                ArrSource::Foreign(n) => Some(n.as_str()),
+                _ => None,
+            };
+            let dim_label = dim.dim_label();
+            let labels = [dim_label.as_deref(), foreign_name, Some(other)];
+            for label in labels.into_iter().flatten() {
+                if let Some(handler) = handlers.get(label) {
+                    let impl_entry = handler
+                        .get("impls")
+                        .and_then(|impls| impls.get(other))
+                        .or_else(|| handler.get(other));
+                    if let Some(op) = impl_entry {
                         let scheme: Term = from_value(op.clone())
                             .map_err(|_| format!("op {other}: invalid handler arrow"))?;
                         return interpret_with_handlers(&scheme, input, handlers);
                     }
                 }
-                eprintln!("[term-interpreter] no handler for op `{other}` in grade `{grade}`");
-                Err(format!("no handler for op {other} in grade {grade}"))
             }
-            _ => {
-                eprintln!("[term-interpreter] unsupported op: {other}");
-                Err(format!("unsupported op: {other}"))
+            match (dim_label, foreign_name) {
+                (Some(d), _) => {
+                    eprintln!("[term-interpreter] no handler for op `{other}` at dimension `{d}`");
+                    Err(format!("no handler for op {other} at dimension {d}"))
+                }
+                (None, Some(n)) => {
+                    eprintln!("[term-interpreter] no handler for op `{other}` at boundary `{n}`");
+                    Err(format!("no handler for op {other} at boundary {n}"))
+                }
+                (None, None) => {
+                    eprintln!("[term-interpreter] unsupported op: {other}");
+                    Err(format!("unsupported op: {other}"))
+                }
             }
-        },
+        }
     }
 }
 

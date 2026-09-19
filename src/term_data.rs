@@ -135,6 +135,34 @@ impl TermData {
             .unwrap_or_else(|| TermData(json!({"__tag__": "Const", "value": 0})))
     }
 
+    /// The `dim` slot of an `Arr`/`Op` record as a `TermData`, defaulting
+    /// to the `Const 1` record when the field is absent (pre-ADR-0119
+    /// records). `dim` is the single dimension/grade slot (ADR-0120
+    /// Phase 3): a numeric literal is a numeric dimension and a string
+    /// literal is a *named* dimension — the handler-routing label that
+    /// the graded-effect surface called a "grade".
+    pub fn dim(&self) -> TermData {
+        self.get_term("dim")
+            .unwrap_or_else(|| TermData(json!({"__tag__": "Const", "value": 1})))
+    }
+
+    /// Resolve this record as a *named* dimension label (ADR-0120
+    /// Phase 3), matching [`Term::dim_label`]: `Const "S"` / `Arr "S"`
+    /// denote the named dimension `S`. Numeric literals and compound
+    /// dimension expressions return `None` — unnamed dimensions carry
+    /// no handler-routing label. Call on a `dim` slot obtained via
+    /// [`TermData::dim`] (e.g. `op_td.dim().dim_label()`).
+    pub fn dim_label(&self) -> Option<String> {
+        match self.tag() {
+            "Const" | "Arr" => self
+                .0
+                .get("value")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            _ => None,
+        }
+    }
+
     /// For an `Op` term, parse the `source` field back into an [`ArrSource`].
     ///
     /// Returns `None` when the `source` field is absent or malformed (which
@@ -178,6 +206,35 @@ impl TermData {
             "source": arr_source_to_value(source),
             "lit": lit.unwrap_or(Value::Null)
         }))
+    }
+
+    /// Construct an `Op` at an explicit dimension (ADR-0120 Phase 3).
+    ///
+    /// `dim` is an ordinary dimension term — `Const n` for a numeric
+    /// dimension, `Const "S"` for a named dimension/grade.
+    pub fn op_dim(
+        name: impl Into<String>,
+        dim: TermData,
+        args: Vec<TermData>,
+        source: &ArrSource,
+        lit: Option<Value>,
+    ) -> Self {
+        let args_arr: Vec<Value> = args.into_iter().map(|t| t.0).collect();
+        TermData(json!({
+            "__tag__": "Op",
+            "dim": dim.0,
+            "name": name.into(),
+            "args": args_arr,
+            "source": arr_source_to_value(source),
+            "lit": lit.unwrap_or(Value::Null)
+        }))
+    }
+
+    /// Construct a `Const` wrapping `value` — a literal dimension term
+    /// suitable for an `Op`'s `dim` slot (e.g. `Const "S"` for a named
+    /// dimension).
+    pub fn dim_const(value: impl Into<Value>) -> Self {
+        TermData(json!({ "__tag__": "Const", "value": value.into() }))
     }
 
     /// Construct a `Seq` (sequential composition, `>>>[0]`).
