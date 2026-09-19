@@ -73,9 +73,10 @@ pub enum Term {
     ///
     /// `axis` is an ordinary expression position holding the composition
     /// axis: `>>>` is `>>>[0]` (sequential composition of 1-cells) and
-    /// `>>>[k]` composes along the k-th globular axis. Execution semantics
-    /// are currently defined for axis 0; higher axes are carried and
-    /// validated structurally pending the multi-axis execution increment.
+    /// `>>>[k]` composes along the k-th globular axis. `k >= 1` executes
+    /// as a globular paste `∘ₖ` via `cell2_comp_axis`, enforcing the
+    /// boundary law `tgt_k(fst) = src_k(snd)`; `Cell2` is the only cell
+    /// shape, so `k >= 2` is a dimension error.
     Seq {
         /// The composition axis (`0` for ordinary `>>>`).
         #[serde(default = "default_axis_value")]
