@@ -308,6 +308,37 @@ impl Term {
         }
     }
 
+    /// The globular dimension of a term (ADR-0120 Phase 5): the `dim`
+    /// slot when it is a numeric literal, otherwise a structural
+    /// estimate through the combinators (a composite has the greatest
+    /// dimension of its parts). Defaults to `1` — an ordinary 1-cell.
+    /// `Seq{axis: k}` pastes along axis `k` only when
+    /// `k < fst.globular_dim()`.
+    pub fn globular_dim(&self) -> u64 {
+        if let Term::Arr { dim, .. } | Term::Op { dim, .. } = self {
+            if let Some(d) = dim.nat_literal() {
+                return d.max(1);
+            }
+        }
+        match self {
+            Term::Seq { fst, snd, .. } => fst.globular_dim().max(snd.globular_dim()),
+            Term::First { inner } => inner.globular_dim(),
+            Term::Choice { l, r } => l.globular_dim().max(r.globular_dim()),
+            Term::Loop { body } | Term::Handle { body, .. } | Term::Cobind { body, .. } => {
+                body.globular_dim()
+            }
+            Term::App { callee, .. } => callee.globular_dim(),
+            Term::Iter { step, .. } => step.globular_dim(),
+            Term::RecordProj { record, .. } | Term::RecordWith { record, .. } => {
+                record.globular_dim()
+            }
+            Term::Tag { value, .. } => value.globular_dim(),
+            Term::Src { cell } | Term::Tgt { cell } => cell.globular_dim(),
+            Term::Rewrite { target, .. } => target.globular_dim(),
+            _ => 1,
+        }
+    }
+
     /// Convenience constructor for a pure constant arrow.
     pub fn const_value(value: impl Into<Value>) -> Self {
         Term::Arr {

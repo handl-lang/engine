@@ -171,6 +171,60 @@ impl TermData {
         value_to_arr_source(self.0.get("source")).ok()
     }
 
+    /// The globular dimension of a term (ADR-0120 Phase 5): the `dim` slot
+    /// when it is a numeric literal, otherwise a structural estimate
+    /// through the combinators (a composite has the greatest dimension of
+    /// its parts). Defaults to `1` — an ordinary 1-cell. `Seq{axis: k}`
+    /// pastes along axis `k` only when `k < fst.globular_dim()`.
+    pub fn globular_dim(&self) -> u64 {
+        // `TermData::dim` supplies a `Const 1` default when the slot is
+        // absent — check the raw field so structural terms (Seq, Tag, …)
+        // fall through to the composite estimate below.
+        if let Some(dim_td) = self.get_term("dim") {
+            if let Some(d) = dim_td.nat_literal() {
+                return d.max(1);
+            }
+        }
+        match self.tag() {
+            "Seq" => self
+                .get_term("fst")
+                .map(|t| t.globular_dim())
+                .unwrap_or(1)
+                .max(self.get_term("snd").map(|t| t.globular_dim()).unwrap_or(1)),
+            "First" => self
+                .get_term("inner")
+                .map(|t| t.globular_dim())
+                .unwrap_or(1),
+            "Choice" => self
+                .get_term("l")
+                .map(|t| t.globular_dim())
+                .unwrap_or(1)
+                .max(self.get_term("r").map(|t| t.globular_dim()).unwrap_or(1)),
+            "Loop" | "Handle" | "Cobind" => {
+                self.get_term("body").map(|t| t.globular_dim()).unwrap_or(1)
+            }
+            "App" => self
+                .get_term("callee")
+                .map(|t| t.globular_dim())
+                .unwrap_or(1),
+            "Iter" => self.get_term("step").map(|t| t.globular_dim()).unwrap_or(1),
+            "RecordProj" | "RecordWith" => self
+                .get_term("record")
+                .map(|t| t.globular_dim())
+                .unwrap_or(1),
+            "Tag" => self
+                .get_term("value")
+                .map(|t| t.globular_dim())
+                .unwrap_or(1),
+            "Src" | "Tgt" => self.get_term("cell").map(|t| t.globular_dim()).unwrap_or(1),
+            "Rewrite" => self
+                .get_term("target")
+                .map(|t| t.globular_dim())
+                .unwrap_or(1),
+            _ => 1,
+        }
+    }
+
     // --- Constructors for all 28 Term variants ---
 
     /// Construct an `Arr` (pure constant arrow).

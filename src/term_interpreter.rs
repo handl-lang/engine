@@ -45,7 +45,7 @@ pub fn interpret_with_handlers(
             } else if k < d {
                 let a = interpret_with_handlers(fst, input.clone(), handlers)?;
                 let b = interpret_with_handlers(snd, input, handlers)?;
-                Ok(cell_comp_axis(k, &a, &b))
+                cell_comp_axis(k, &a, &b)
             } else {
                 Err(format!(
                     "Seq: axis-{k} composition requires cells of dimension > {k} (fst has dim {d})"
@@ -191,32 +191,11 @@ fn seq_axis_index(
         .ok_or_else(|| format!("Seq: axis expression evaluated to a non-natural value: {v}"))
 }
 
-/// The globular dimension of a term (ADR-0120 Phase 5): the `dim` slot
-/// when it is a numeric literal, otherwise a structural estimate through
-/// the combinators (a composite has the greatest dimension of its
-/// parts). Defaults to `1` — an ordinary 1-cell. `Seq{axis: k}` pastes
-/// along axis `k` only when `k < term_dim(fst)`.
+/// The globular dimension of a term (ADR-0120 Phase 5) — delegates to
+/// [`Term::globular_dim`], the shared implementation. `Seq{axis: k}`
+/// pastes along axis `k` only when `k < term_dim(fst)`.
 fn term_dim(t: &Term) -> u64 {
-    if let Term::Arr { dim, .. } | Term::Op { dim, .. } = t {
-        if let Some(d) = dim.nat_literal() {
-            return d.max(1);
-        }
-    }
-    match t {
-        Term::Seq { fst, snd, .. } => term_dim(fst).max(term_dim(snd)),
-        Term::First { inner } => term_dim(inner),
-        Term::Choice { l, r } => term_dim(l).max(term_dim(r)),
-        Term::Loop { body } | Term::Handle { body, .. } | Term::Cobind { body, .. } => {
-            term_dim(body)
-        }
-        Term::App { callee, .. } => term_dim(callee),
-        Term::Iter { step, .. } => term_dim(step),
-        Term::RecordProj { record, .. } | Term::RecordWith { record, .. } => term_dim(record),
-        Term::Tag { value, .. } => term_dim(value),
-        Term::Src { cell } | Term::Tgt { cell } => term_dim(cell),
-        Term::Rewrite { target, .. } => term_dim(target),
-        _ => 1,
-    }
+    t.globular_dim()
 }
 
 /// `Cell2` record `{__tag__, __src__, __tgt__, value}` — the runtime
@@ -263,23 +242,34 @@ fn cell_is_id(v: &Value) -> bool {
 
 /// Axis-`k` composition of n-cells (n > k) at the value level
 /// (ADR-0120 Phase 5). `∘₀` on 2-cells is horizontal composition —
-/// boundaries compose pairwise as `Arrow` records; `∘₁` is vertical
-/// composition — target of `a` meets source of `b`. The non-identity
-/// operand supplies the witness `value`.
-fn cell_comp_axis(axis: u64, a: &Value, b: &Value) -> Value {
+/// boundaries compose pairwise as `Arrow` records; `∘ₖ` for `k ≥ 1` is
+/// vertical composition — target of `a` meets source of `b`. The
+/// non-identity operand supplies the witness `value`.
+///
+/// Mirrors `handl_value::cell2_comp_axis`: the globular boundary law
+/// `tgtₖ(a) = srcₖ(b)` is enforced for `k ≥ 1` — the only boundary the
+/// `Cell2` record represents (the 0-boundaries/objects are not, so `∘₀`
+/// is unchecked).
+fn cell_comp_axis(axis: u64, a: &Value, b: &Value) -> Result<Value, String> {
+    if axis >= 1 && cell_tgt(a) != cell_src(b) {
+        return Err(format!(
+            "cell composition along axis {axis}: boundary mismatch — \
+             tgt of the first cell does not equal src of the second"
+        ));
+    }
     let witness = if cell_is_id(b) {
         cell_witness(a)
     } else {
         cell_witness(b)
     };
-    match axis {
+    Ok(match axis {
         0 => cell2(
             arrow_pair(&cell_src(a), &cell_src(b)),
             arrow_pair(&cell_tgt(a), &cell_tgt(b)),
             witness,
         ),
         _ => cell2(cell_src(a), cell_tgt(b), witness),
-    }
+    })
 }
 
 fn eval_op(
