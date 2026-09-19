@@ -43,7 +43,24 @@ pub trait LanguageView {
     /// Resolve the child position of `role` within nodes of kind `kind`
     /// (ADR-0081). Returns `None` when the kind has no shape or no such
     /// role (positional fallback is then the caller's concern).
+    ///
+    /// The index is the shape's full-form position (all declared roles,
+    /// optional included, occupy a slot). For kinds whose shape declares
+    /// `optional` roles, prefer [`child_role_index_at`](Self::child_role_index_at).
     fn child_role_index(&self, kind: &str, role: &str) -> Option<usize>;
+
+    /// Arity-aware role resolution (ADR-0081 optional-role extension):
+    /// resolve `role` for a `kind` node that actually has `arity` children.
+    ///
+    /// Optional slots are filled in declaration order by
+    /// `arity - (required count)`; a role whose optional slot is absent at
+    /// this arity resolves to `None`. The default implementation ignores
+    /// `arity` and delegates to [`child_role_index`](Self::child_role_index)
+    /// — correct for shapes without optional roles.
+    fn child_role_index_at(&self, kind: &str, role: &str, arity: usize) -> Option<usize> {
+        let _ = arity;
+        self.child_role_index(kind, role)
+    }
 
     /// The eval scheme (`Term`) registered for `kind`, if any.
     fn eval_rule(&self, kind: &str) -> Option<&Term>;
