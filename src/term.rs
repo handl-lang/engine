@@ -198,6 +198,22 @@ pub enum Term {
         /// The body.
         body: Box<Term>,
     },
+
+    /// A term in open data form (ADR-0119 §7 fold, ADR-0120 Phase 5).
+    ///
+    /// `data` is an ADR-0103 tagged record `{"__tag__": <name>, ...}`
+    /// whose `__tag__` names a *derived* operator — `Path`, `Equiv`,
+    /// `Refine`, `CellId`, `Whisker`, `Univalence`, … — folded out of
+    /// the closed `Term` vocabulary. The kernel carries the record
+    /// opaquely (no structural interpretation); `TermData::from_term`
+    /// reproduces `data` exactly, so tag-directed evaluators, models,
+    /// and the law machinery see the same record the surface forms
+    /// produce. [`TermData::to_term`] maps any unrecognised tag to this
+    /// variant, making the `Term`/`TermData` conversion total.
+    Opaque {
+        /// The tagged record naming the derived operator and its fields.
+        data: Value,
+    },
 }
 
 /// Whether an `Op` is a native pure function or a foreign host call.
@@ -589,6 +605,9 @@ impl Term {
                 grade: Box::new(grade.desugar()),
                 body: Box::new(body.desugar()),
             },
+            // `Opaque` carries data-level fields (TermData records), not
+            // `Term` structure — there is nothing to recursively desugar.
+            Term::Opaque { data } => Term::Opaque { data: data.clone() },
         }
     }
 
@@ -698,6 +717,9 @@ impl Term {
                 grade: Box::new(grade.eliminate_handlers()),
                 body: Box::new(body.eliminate_handlers()),
             },
+            // Data-form terms carry their fields as TermData records;
+            // handler elimination does not descend into them.
+            Term::Opaque { data } => Term::Opaque { data: data.clone() },
         }
     }
 }
@@ -827,6 +849,8 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             grade: Box::new(substitute_capability(grade, target, impl_)),
             body: Box::new(substitute_capability(body, target, impl_)),
         },
+        // Data-form fields are TermData records, not `Term`s.
+        Term::Opaque { data } => Term::Opaque { data: data.clone() },
     }
 }
 

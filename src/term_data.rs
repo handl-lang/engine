@@ -573,6 +573,8 @@ fn term_to_value(term: &Term) -> Value {
         Term::Cobind { grade, body } => {
             json!({ "__tag__": "Cobind", "grade": term_to_value(grade), "body": term_to_value(body) })
         }
+        // The record round-trips verbatim: `Opaque` *is* the data form.
+        Term::Opaque { data } => data.clone(),
     }
 }
 
@@ -692,7 +694,15 @@ fn value_to_term(value: &Value) -> Result<Term, String> {
             grade: Box::new(field_term(value, "grade")?),
             body: Box::new(field_term(value, "body")?),
         }),
-        other => Err(format!("unknown tag: {other}")),
+        // ADR-0119 §7 fold / ADR-0120 Phase 5: any tag outside the closed
+        // kernel vocabulary names a *derived* operator in data form —
+        // `Path`, `Equiv`, `Refine`, `CellId`, `Whisker`, `Univalence`,
+        // `Glue`, `Fibrant`, `JElim`, … — carried as `Term::Opaque` so the
+        // conversion stays total and `TermData::from_term` round-trips the
+        // record exactly.
+        _ => Ok(Term::Opaque {
+            data: value.clone(),
+        }),
     }
 }
 
@@ -758,6 +768,11 @@ fn value_to_rewrite_witness(value: Option<&Value>) -> Result<RewriteWitness, Str
 }
 
 /// Parse a [`Side`] from its ADR-0103 `Value` shape.
+///
+/// Only the `#[cfg(any())]`-disabled round-trip tests below use this
+/// while `Whisker` lives in data form (`Term::Opaque`); kept so Whisker
+/// records re-gain a structured decode path when they fold back.
+#[allow(dead_code)]
 fn value_to_side(value: Option<&Value>) -> Result<Side, String> {
     match value {
         Some(Value::String(s)) if s == "Left" => Ok(Side::Left),
@@ -1213,9 +1228,13 @@ mod tests {
     }
 
     #[test]
-    fn unknown_tag_errors() {
+    fn unknown_tag_becomes_opaque() {
+        // ADR-0119 §7 fold: tags outside the kernel vocabulary are
+        // derived operators carried in data form (`Term::Opaque`), so
+        // `to_term` is total and round-trips the record exactly.
         let bad = TermData(json!({ "__tag__": "Nope" }));
-        assert_eq!(bad.to_term(), Err("unknown tag: Nope".to_string()));
+        let term = bad.to_term().expect("unknown tag folds to Opaque");
+        assert_eq!(TermData::from_term(&term), bad);
     }
 
     #[test]

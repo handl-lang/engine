@@ -32,17 +32,24 @@ pub fn interpret_with_handlers(
         Term::Arr { dim: _, value } | Term::Const { value } => Ok(value.clone()),
 
         Term::Seq { axis, fst, snd } => {
-            // ADR-0120 Phase 2: `>>>` is `>>>[0]`. Axis 0 keeps sequential
-            // execution; higher axes are carried structurally — multi-axis
-            // execution is a later increment, so they fall back here.
-            match seq_axis_index(axis, &input, handlers)? {
-                0 => {
-                    let v = interpret_with_handlers(fst, input, handlers)?;
-                    interpret_with_handlers(snd, v, handlers)
-                }
-                k => Err(format!(
-                    "Seq: axis-{k} composition is not yet implemented (ADR-0120 Phase 2)"
-                )),
+            // ADR-0120 Phase 5: `Seq{axis: k}` is `∘ₖ` — composition
+            // along the k-th globular axis. Axis 0 on 1-cells (`dim ≤ 1`)
+            // is sequential composition; `k < dim` pastes n-cells along
+            // the k-boundary at the value level (∘₀ horizontal, ∘₁
+            // vertical, …) — both operands see the same input.
+            let k = seq_axis_index(axis, &input, handlers)?;
+            let d = term_dim(fst);
+            if k == 0 && d <= 1 {
+                let v = interpret_with_handlers(fst, input, handlers)?;
+                interpret_with_handlers(snd, v, handlers)
+            } else if k < d {
+                let a = interpret_with_handlers(fst, input.clone(), handlers)?;
+                let b = interpret_with_handlers(snd, input, handlers)?;
+                Ok(cell_comp_axis(k, &a, &b))
+            } else {
+                Err(format!(
+                    "Seq: axis-{k} composition requires cells of dimension > {k} (fst has dim {d})"
+                ))
             }
         }
 
@@ -184,6 +191,97 @@ fn seq_axis_index(
         .ok_or_else(|| format!("Seq: axis expression evaluated to a non-natural value: {v}"))
 }
 
+/// The globular dimension of a term (ADR-0120 Phase 5): the `dim` slot
+/// when it is a numeric literal, otherwise a structural estimate through
+/// the combinators (a composite has the greatest dimension of its
+/// parts). Defaults to `1` — an ordinary 1-cell. `Seq{axis: k}` pastes
+/// along axis `k` only when `k < term_dim(fst)`.
+fn term_dim(t: &Term) -> u64 {
+    if let Term::Arr { dim, .. } | Term::Op { dim, .. } = t {
+        if let Some(d) = dim.nat_literal() {
+            return d.max(1);
+        }
+    }
+    match t {
+        Term::Seq { fst, snd, .. } => term_dim(fst).max(term_dim(snd)),
+        Term::First { inner } => term_dim(inner),
+        Term::Choice { l, r } => term_dim(l).max(term_dim(r)),
+        Term::Loop { body } | Term::Handle { body, .. } | Term::Cobind { body, .. } => {
+            term_dim(body)
+        }
+        Term::App { callee, .. } => term_dim(callee),
+        Term::Iter { step, .. } => term_dim(step),
+        Term::RecordProj { record, .. } | Term::RecordWith { record, .. } => term_dim(record),
+        Term::Tag { value, .. } => term_dim(value),
+        Term::Src { cell } | Term::Tgt { cell } => term_dim(cell),
+        Term::Rewrite { target, .. } => term_dim(target),
+        _ => 1,
+    }
+}
+
+/// `Cell2` record `{__tag__, __src__, __tgt__, value}` — the runtime
+/// shape `handl-value` produces for 2-cells.
+fn cell2(src: Value, tgt: Value, value: Value) -> Value {
+    let mut map = Map::new();
+    map.insert("__tag__".into(), Value::from("Cell2"));
+    map.insert("__src__".into(), src);
+    map.insert("__tgt__".into(), tgt);
+    map.insert("value".into(), value);
+    Value::Object(map)
+}
+
+/// `Arrow` record `{__tag__, first, second}` — the 1-cell composite
+/// boundary shape.
+fn arrow_pair(first: &Value, second: &Value) -> Value {
+    let mut map = Map::new();
+    map.insert("__tag__".into(), Value::from("Arrow"));
+    map.insert("first".into(), first.clone());
+    map.insert("second".into(), second.clone());
+    Value::Object(map)
+}
+
+fn cell_src(v: &Value) -> Value {
+    v.get("__src__").cloned().unwrap_or_else(|| v.clone())
+}
+
+fn cell_tgt(v: &Value) -> Value {
+    v.get("__tgt__").cloned().unwrap_or_else(|| v.clone())
+}
+
+fn cell_witness(v: &Value) -> Value {
+    v.get("value").cloned().unwrap_or_else(|| v.clone())
+}
+
+/// Whether `v` is an identity 2-cell: `Cell2{src, src, src}`.
+fn cell_is_id(v: &Value) -> bool {
+    if v.get("__tag__").and_then(Value::as_str) != Some("Cell2") {
+        return false;
+    }
+    let src = cell_src(v);
+    src == cell_tgt(v) && v.get("value") == Some(&src)
+}
+
+/// Axis-`k` composition of n-cells (n > k) at the value level
+/// (ADR-0120 Phase 5). `∘₀` on 2-cells is horizontal composition —
+/// boundaries compose pairwise as `Arrow` records; `∘₁` is vertical
+/// composition — target of `a` meets source of `b`. The non-identity
+/// operand supplies the witness `value`.
+fn cell_comp_axis(axis: u64, a: &Value, b: &Value) -> Value {
+    let witness = if cell_is_id(b) {
+        cell_witness(a)
+    } else {
+        cell_witness(b)
+    };
+    match axis {
+        0 => cell2(
+            arrow_pair(&cell_src(a), &cell_src(b)),
+            arrow_pair(&cell_tgt(a), &cell_tgt(b)),
+            witness,
+        ),
+        _ => cell2(cell_src(a), cell_tgt(b), witness),
+    }
+}
+
 fn eval_op(
     name: &str,
     dim: &Term,
@@ -316,22 +414,63 @@ fn eval_op(
         }
 
         "record" => {
-            let keys = lit
-                .and_then(Value::as_array)
-                .ok_or_else(|| "record: missing key list")?;
-            if keys.len() != args.len() {
-                return Err("record: key/value count mismatch".into());
-            }
             let mut obj = Map::new();
-            for (i, arg) in args.iter().enumerate() {
-                let key = keys[i]
-                    .as_str()
-                    .ok_or_else(|| "record: key is not a string")?;
-                obj.insert(
-                    key.to_string(),
-                    interpret_with_handlers(arg, input.clone(), handlers)?,
-                );
+            if let Some(keys) = lit.and_then(Value::as_array) {
+                // Compiled form: `lit` carries the key list and `args`
+                // the values (same length).
+                if keys.len() != args.len() {
+                    return Err("record: key/value count mismatch".into());
+                }
+                for (i, arg) in args.iter().enumerate() {
+                    let key = keys[i]
+                        .as_str()
+                        .ok_or_else(|| "record: key is not a string")?;
+                    obj.insert(
+                        key.to_string(),
+                        interpret_with_handlers(arg, input.clone(), handlers)?,
+                    );
+                }
+            } else {
+                // Scheme form (the tree-walk native op's shape): `args`
+                // alternate key-expr, value-expr pairs.
+                if args.len() % 2 != 0 {
+                    return Err(format!(
+                        "record: expected even number of arguments, got {}",
+                        args.len()
+                    ));
+                }
+                for i in (0..args.len()).step_by(2) {
+                    let key = interpret_with_handlers(&args[i], input.clone(), handlers)?
+                        .as_str()
+                        .map(str::to_string)
+                        .ok_or_else(|| format!("record: key at index {i} must be a string"))?;
+                    obj.insert(
+                        key,
+                        interpret_with_handlers(&args[i + 1], input.clone(), handlers)?,
+                    );
+                }
             }
+            Ok(Value::Object(obj))
+        }
+
+        "tag.construct" => {
+            // `tag.construct(tag, record)` stamps `__tag__` onto a record —
+            // the `Arrow`/`Cell2`/law record constructors share this op.
+            if args.len() != 2 {
+                return Err(format!(
+                    "tag.construct: expected 2 arguments, got {}",
+                    args.len()
+                ));
+            }
+            let tag = interpret_with_handlers(&args[0], input.clone(), handlers)?
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| "tag.construct: tag must be a string".to_string())?;
+            let mut obj = match interpret_with_handlers(&args[1], input, handlers)? {
+                Value::Object(m) => m,
+                _ => Map::new(),
+            };
+            obj.insert("__tag__".into(), Value::from(tag));
             Ok(Value::Object(obj))
         }
 
