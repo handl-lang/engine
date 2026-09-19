@@ -174,8 +174,13 @@ impl TermData {
     /// The globular dimension of a term (ADR-0120 Phase 5): the `dim` slot
     /// when it is a numeric literal, otherwise a structural estimate
     /// through the combinators (a composite has the greatest dimension of
-    /// its parts). Defaults to `1` — an ordinary 1-cell. `Seq{axis: k}`
-    /// pastes along axis `k` only when `k < fst.globular_dim()`.
+    /// its parts). Defaults to `1` — an ordinary 1-cell.
+    ///
+    /// This is the *declared* dimension — the static estimate that picks
+    /// the sequential-vs-pasting `Seq` branch. At the value level the
+    /// effective dimension also lifts to `cell_dim` of the evaluated
+    /// operands, so a term declared dimension 2 can still produce and
+    /// paste 3-cell (`Cell`/`__dim__`) values at axis 2.
     pub fn globular_dim(&self) -> u64 {
         // `TermData::dim` supplies a `Const 1` default when the slot is
         // absent — check the raw field so structural terms (Seq, Tag, …)

@@ -73,10 +73,12 @@ pub enum Term {
     ///
     /// `axis` is an ordinary expression position holding the composition
     /// axis: `>>>` is `>>>[0]` (sequential composition of 1-cells) and
-    /// `>>>[k]` composes along the k-th globular axis. `k >= 1` executes
-    /// as a globular paste `∘ₖ` via `cell2_comp_axis`, enforcing the
-    /// boundary law `tgt_k(fst) = src_k(snd)`; `Cell2` is the only cell
-    /// shape, so `k >= 2` is a dimension error.
+    /// `>>>[k]` composes along the k-th globular axis. Nonzero `k`
+    /// executes as a globular paste `∘ₖ` via `cell_comp_axis`, enforcing
+    /// the boundary law `tgt_k(fst) = src_k(snd)`. The effective
+    /// dimension is `max(declared, cell_dim(fst), cell_dim(snd))` —
+    /// `Cell`/`__dim__` records (n-cells) and `dim_arrow` values paste at
+    /// their own height; `k >= n` on plain values is a dimension error.
     Seq {
         /// The composition axis (`0` for ordinary `>>>`).
         #[serde(default = "default_axis_value")]
@@ -313,8 +315,12 @@ impl Term {
     /// slot when it is a numeric literal, otherwise a structural
     /// estimate through the combinators (a composite has the greatest
     /// dimension of its parts). Defaults to `1` — an ordinary 1-cell.
-    /// `Seq{axis: k}` pastes along axis `k` only when
-    /// `k < fst.globular_dim()`.
+    ///
+    /// This is the *declared* dimension — the static estimate that picks
+    /// the sequential-vs-pasting `Seq` branch. At the value level the
+    /// effective dimension also lifts to `cell_dim` of the evaluated
+    /// operands, so a term declared dimension 2 can still produce and
+    /// paste 3-cell (`Cell`/`__dim__`) values at axis 2.
     pub fn globular_dim(&self) -> u64 {
         if let Term::Arr { dim, .. } | Term::Op { dim, .. } = self {
             if let Some(d) = dim.nat_literal() {

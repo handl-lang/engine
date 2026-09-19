@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use handl_value::{TaggedValue, tagged_to_value};
 use serde_json::{Map, Number, Value, from_value};
 
 use crate::{ArrSource, Term};
@@ -42,14 +43,16 @@ pub fn interpret_with_handlers(
             if k == 0 && d <= 1 {
                 let v = interpret_with_handlers(fst, input, handlers)?;
                 interpret_with_handlers(snd, v, handlers)
-            } else if k < d {
+            } else {
+                // Globular pasting: both operands evaluate against the
+                // same input, and the *effective* dimension is the
+                // greater of the declared term dimension and the
+                // evaluated values' cell dimensions — a `Cell`/`__dim__`
+                // record pastes at its own height, so `>>>[2]` runs on
+                // 3-cell values through the dimension-2 surface scheme.
                 let a = interpret_with_handlers(fst, input.clone(), handlers)?;
                 let b = interpret_with_handlers(snd, input, handlers)?;
-                cell_comp_axis(k, &a, &b)
-            } else {
-                Err(format!(
-                    "Seq: axis-{k} composition requires cells of dimension > {k} (fst has dim {d})"
-                ))
+                cell_comp_axis(k, d, &a, &b)
             }
         }
 
@@ -198,78 +201,39 @@ fn term_dim(t: &Term) -> u64 {
     t.globular_dim()
 }
 
-/// `Cell2` record `{__tag__, __src__, __tgt__, value}` — the runtime
-/// shape `handl-value` produces for 2-cells.
-fn cell2(src: Value, tgt: Value, value: Value) -> Value {
-    let mut map = Map::new();
-    map.insert("__tag__".into(), Value::from("Cell2"));
-    map.insert("__src__".into(), src);
-    map.insert("__tgt__".into(), tgt);
-    map.insert("value".into(), value);
-    Value::Object(map)
+/// Axis-`k` composition of n-cells at the JSON value level (ADR-0120).
+/// Delegates to [`handl_value::cell_comp_axis`] — the single
+/// implementation of the globular pasting law — via the `TaggedValue`
+/// bridge. `declared_dim` is the operands' declared (term-level)
+/// dimension; the effective dimension also lifts to the values' own
+/// `cell_dim`, so `Cell`/`__dim__` records paste at their own height.
+fn cell_comp_axis(axis: u64, declared_dim: u64, a: &Value, b: &Value) -> Result<Value, String> {
+    let av = TaggedValue::from(a.clone());
+    let bv = TaggedValue::from(b.clone());
+    handl_value::cell_comp_axis(axis, declared_dim, &av, &bv).map(|v| tagged_to_value(&v))
 }
 
-/// `Arrow` record `{__tag__, first, second}` — the 1-cell composite
-/// boundary shape.
-fn arrow_pair(first: &Value, second: &Value) -> Value {
-    let mut map = Map::new();
-    map.insert("__tag__".into(), Value::from("Arrow"));
-    map.insert("first".into(), first.clone());
-    map.insert("second".into(), second.clone());
-    Value::Object(map)
+/// `compose(diagram)` — generalized pasting/Kan filling (ADR-0120) at
+/// the JSON value level; delegates to [`handl_value::cell_compose`].
+fn cell_compose(diagram: &Value) -> Result<Value, String> {
+    handl_value::cell_compose(&TaggedValue::from(diagram.clone()))
+        .map(|v| tagged_to_value(&v))
 }
 
-fn cell_src(v: &Value) -> Value {
-    v.get("__src__").cloned().unwrap_or_else(|| v.clone())
-}
-
-fn cell_tgt(v: &Value) -> Value {
-    v.get("__tgt__").cloned().unwrap_or_else(|| v.clone())
-}
-
-fn cell_witness(v: &Value) -> Value {
-    v.get("value").cloned().unwrap_or_else(|| v.clone())
-}
-
-/// Whether `v` is an identity 2-cell: `Cell2{src, src, src}`.
-fn cell_is_id(v: &Value) -> bool {
-    if v.get("__tag__").and_then(Value::as_str) != Some("Cell2") {
-        return false;
+/// The declared operand dimension baked into a compiled
+/// `cell_comp_axis[:N]` op name (the legacy `cell2_comp_axis[:N]`
+/// spelling is accepted too). Bare `cell_comp_axis`/`cell2_comp_axis`
+/// declare dimension 2 — the `>>>[k]` surface lift.
+fn cell_axis_op_dim(name: &str) -> Option<u64> {
+    for prefix in ["cell_comp_axis", "cell2_comp_axis"] {
+        if name == prefix {
+            return Some(2);
+        }
+        if let Some(suffix) = name.strip_prefix(prefix).and_then(|s| s.strip_prefix(':')) {
+            return suffix.parse::<u64>().ok().map(|d| d.max(1));
+        }
     }
-    let src = cell_src(v);
-    src == cell_tgt(v) && v.get("value") == Some(&src)
-}
-
-/// Axis-`k` composition of n-cells (n > k) at the value level
-/// (ADR-0120 Phase 5). `∘₀` on 2-cells is horizontal composition —
-/// boundaries compose pairwise as `Arrow` records; `∘ₖ` for `k ≥ 1` is
-/// vertical composition — target of `a` meets source of `b`. The
-/// non-identity operand supplies the witness `value`.
-///
-/// Mirrors `handl_value::cell2_comp_axis`: the globular boundary law
-/// `tgtₖ(a) = srcₖ(b)` is enforced for `k ≥ 1` — the only boundary the
-/// `Cell2` record represents (the 0-boundaries/objects are not, so `∘₀`
-/// is unchecked).
-fn cell_comp_axis(axis: u64, a: &Value, b: &Value) -> Result<Value, String> {
-    if axis >= 1 && cell_tgt(a) != cell_src(b) {
-        return Err(format!(
-            "cell composition along axis {axis}: boundary mismatch — \
-             tgt of the first cell does not equal src of the second"
-        ));
-    }
-    let witness = if cell_is_id(b) {
-        cell_witness(a)
-    } else {
-        cell_witness(b)
-    };
-    Ok(match axis {
-        0 => cell2(
-            arrow_pair(&cell_src(a), &cell_src(b)),
-            arrow_pair(&cell_tgt(a), &cell_tgt(b)),
-            witness,
-        ),
-        _ => cell2(cell_src(a), cell_tgt(b), witness),
-    })
+    None
 }
 
 fn eval_op(
@@ -532,6 +496,46 @@ fn eval_op(
                         return interpret_with_handlers(&scheme, input, handlers);
                     }
                 }
+            }
+            // Calculus ops (ADR-0120) — the same ops `native_ops` shares
+            // with the exec backends, consulted *after* handler dispatch
+            // so a pushed handler may still override the name.
+            //
+            // `compose(diagram)`: generalized pasting/Kan filling — the
+            // n-ary `Seq{axis}`. The diagram is an array of
+            // `{axis, cell}` steps (a bare cell is axis 0); with no args
+            // the incoming value is the diagram.
+            if other == "compose" {
+                let diagram = match args.len() {
+                    0 => input,
+                    1 => interpret_with_handlers(&args[0], input, handlers)?,
+                    _ => {
+                        let mut steps = Vec::with_capacity(args.len());
+                        for arg in args {
+                            steps.push(interpret_with_handlers(arg, input.clone(), handlers)?);
+                        }
+                        Value::Array(steps)
+                    }
+                };
+                return cell_compose(&diagram);
+            }
+            // `cell_comp_axis[:N]` (legacy `cell2_comp_axis[:N]`) — the
+            // compiled backends' lowering of `Seq{axis}` pasting:
+            // `[axis, fst, snd]` on the same input, `N` the declared dim.
+            if let Some(declared) = cell_axis_op_dim(other) {
+                if args.len() != 3 {
+                    return Err(format!(
+                        "{other}: expected 3 arguments (axis, fst, snd), got {}",
+                        args.len()
+                    ));
+                }
+                let axis_val = interpret_with_handlers(&args[0], input.clone(), handlers)?;
+                let k = axis_val
+                    .as_u64()
+                    .ok_or_else(|| format!("{other}: axis evaluated to a non-natural value"))?;
+                let a = interpret_with_handlers(&args[1], input.clone(), handlers)?;
+                let b = interpret_with_handlers(&args[2], input, handlers)?;
+                return cell_comp_axis(k, declared, &a, &b);
             }
             match (dim_label, foreign_name) {
                 (Some(d), _) => {
