@@ -467,6 +467,10 @@ fn eval_op(
             Ok(Value::Object(obj))
         }
 
+        // `truthy` — coerce the incoming value to a strict `Bool` (the
+        // `&&`/`||` schemes' RHS arm; mirrors the `native_ops` op).
+        "truthy" => Ok(Value::Bool(is_truthy(&input))),
+
         "assert" => {
             Err("assert: keyword assertions are not supported by the arrow interpreter".into())
         }
