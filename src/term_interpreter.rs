@@ -95,7 +95,6 @@ pub fn interpret_with_handlers(
                 // non-nested loop; this is a conservative fallback.
                 return Ok(out);
             }
-            eprintln!("[term-interpreter] Term::Loop: exceeded max iterations");
             Err("Loop: exceeded max iterations".to_string())
         }
 
@@ -142,12 +141,10 @@ pub fn interpret_with_handlers(
             // String callees are host-function names; the small interpreter
             // has no registry, so report it clearly.
             if callee_val.as_str().is_some() {
-                eprintln!("[term-interpreter] Term::App: host-function callees are not supported");
                 return Err("App: host-function callees are not supported".to_string());
             }
 
-            eprintln!("[term-interpreter] Term::App: callee is not an arrow value: {callee_val}");
-            Err("App: callee is not an arrow value".to_string())
+            Err(format!("App: callee is not an arrow value: {callee_val}"))
         }
 
         Term::Handle {
@@ -169,10 +166,7 @@ pub fn interpret_with_handlers(
             lit,
         } => eval_op(name, dim, args, source, lit.as_ref(), input, handlers),
 
-        other => {
-            eprintln!("[term-interpreter] unsupported Term: {other:?}");
-            Err(format!("unsupported Term: {other:?}"))
-        }
+        other => Err(format!("unsupported Term: {other:?}")),
     }
 }
 
@@ -541,19 +535,14 @@ fn eval_op(
                 let b = interpret_with_handlers(&args[2], input, handlers)?;
                 return cell_comp_axis(k, declared, &a, &b);
             }
+            // No handler: the `Err` doubles as the caller's fall-back
+            // signal, so it carries the diagnostic text itself.
             match (dim_label, foreign_name) {
-                (Some(d), _) => {
-                    eprintln!("[term-interpreter] no handler for op `{other}` at dimension `{d}`");
-                    Err(format!("no handler for op {other} at dimension {d}"))
-                }
+                (Some(d), _) => Err(format!("no handler for op {other} at dimension {d}")),
                 (None, Some(n)) => {
-                    eprintln!("[term-interpreter] no handler for op `{other}` at boundary `{n}`");
                     Err(format!("no handler for op {other} at boundary {n}"))
                 }
-                (None, None) => {
-                    eprintln!("[term-interpreter] unsupported op: {other}");
-                    Err(format!("unsupported op: {other}"))
-                }
+                (None, None) => Err(format!("unsupported op: {other}")),
             }
         }
     }
