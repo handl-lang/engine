@@ -210,8 +210,7 @@ fn cell_comp_axis(axis: u64, declared_dim: u64, a: &Value, b: &Value) -> Result<
 /// `compose(diagram)` — generalized pasting/Kan filling (ADR-0120) at
 /// the JSON value level; delegates to [`handl_value::cell_compose`].
 fn cell_compose(diagram: &Value) -> Result<Value, String> {
-    handl_value::cell_compose(&TaggedValue::from(diagram.clone()))
-        .map(|v| tagged_to_value(&v))
+    handl_value::cell_compose(&TaggedValue::from(diagram.clone())).map(|v| tagged_to_value(&v))
 }
 
 /// The declared operand dimension baked into a compiled
@@ -539,9 +538,7 @@ fn eval_op(
             // signal, so it carries the diagnostic text itself.
             match (dim_label, foreign_name) {
                 (Some(d), _) => Err(format!("no handler for op {other} at dimension {d}")),
-                (None, Some(n)) => {
-                    Err(format!("no handler for op {other} at boundary {n}"))
-                }
+                (None, Some(n)) => Err(format!("no handler for op {other} at boundary {n}")),
                 (None, None) => Err(format!("unsupported op: {other}")),
             }
         }
