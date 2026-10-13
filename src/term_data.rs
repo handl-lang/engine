@@ -18,7 +18,7 @@
 //!
 //! [`TermData::from_term`] converts a `Term` to `TermData`.
 //! [`TermData::to_term`] converts back (for bootstrap compatibility).
-//! The conversion is lossless for all 28 variants.
+//! The conversion is lossless for every variant of the kernel vocabulary.
 //!
 //! ## Why not serde?
 //!
@@ -501,7 +501,7 @@ impl TermData {
     ///
     /// This mirrors `plugin_lib_handl::model::term_to_value` so the JSON
     /// shape is identical to what Handl-authored models consume. The
-    /// conversion is lossless for all 28 variants.
+    /// conversion is lossless for every variant of the kernel vocabulary.
     pub fn from_term(term: &Term) -> Self {
         TermData(term_to_value(term))
     }
@@ -828,9 +828,10 @@ fn value_to_rewrite_witness(value: Option<&Value>) -> Result<RewriteWitness, Str
 
 /// Parse a [`Side`] from its ADR-0103 `Value` shape.
 ///
-/// Only the `#[cfg(any())]`-disabled round-trip tests below use this
-/// while `Whisker` lives in data form (`Term::Opaque`); kept so Whisker
-/// records re-gain a structured decode path when they fold back.
+/// Unused while `Whisker` lives in data form (`Term::Opaque`, ADR-0119 §7):
+/// the opaque record carries `side` verbatim and nothing decodes it
+/// structurally. Kept so Whisker records re-gain a structured decode path if
+/// they fold back out of `Opaque`.
 #[allow(dead_code)]
 fn value_to_side(value: Option<&Value>) -> Result<Side, String> {
     match value {
@@ -875,464 +876,175 @@ fn field_term_list(value: &Value, name: &str) -> Result<Vec<Term>, String> {
         .collect()
 }
 
-// Stale term-constructor tests are disabled for the N-dimensional arrow
-// calculus transition (Term::Arr/Op now carry `dim`, JElim/Refine removed).
-#[cfg(any())]
+#[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A representative `Term` for each of the 28 variants, used for
-    /// round-trip and constructor-shape tests.
-    fn sample_terms() -> Vec<(&'static str, Term)> {
-        let arr = Term::Arr {
-            value: Value::from(5),
-        };
-        let cst = Term::Const {
-            value: Value::from(42),
-        };
-        let op = Term::Op {
-            name: "add".into(),
-            args: vec![Term::Arr {
-                value: Value::from(1),
-            }],
-            source: ArrSource::Native,
-            lit: None,
-        };
-        let op_lit = Term::Op {
-            name: "proj_env".into(),
-            args: vec![],
-            source: ArrSource::Native,
-            lit: Some(Value::from("x")),
-        };
-        let op_foreign = Term::Op {
-            name: "io".into(),
-            args: vec![],
-            source: ArrSource::Foreign("io".into()),
-            lit: None,
-        };
-        let op_judgment = Term::Op {
-            name: "check".into(),
-            args: vec![],
-            source: ArrSource::Judgment,
-            lit: None,
-        };
-        let op_dyn = Term::Op {
-            name: "dyn".into(),
-            args: vec![],
-            source: ArrSource::DynamicForeign,
-            lit: None,
-        };
-        let seq = Term::Seq {
-            fst: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            snd: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let first = Term::First {
-            inner: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-        };
-        let choice = Term::Choice {
-            l: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            r: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let loop_ = Term::Loop {
-            body: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-        };
-        let app = Term::App {
-            callee: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            args: vec![Term::Arr {
-                value: Value::from(2),
-            }],
-        };
-        let iter = Term::Iter {
-            fuel: Box::new(Term::Arr {
-                value: Value::from(3),
-            }),
-            predicate: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            step: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            initial: Box::new(Term::Arr {
-                value: Value::from(0),
-            }),
-        };
-        let child = Term::Child {
-            role: "value".into(),
-        };
-        let handle = Term::Handle {
-            body: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            target: "io".into(),
-            impl_: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let rewrite = Term::Rewrite {
-            source: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            target: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-            witness: RewriteWitness::Named("comm".into()),
-        };
-        let rewrite_compute = Term::Rewrite {
-            source: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            target: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-            witness: RewriteWitness::Compute,
-        };
-        let path = Term::Path {
-            endpoints: (
-                Box::new(Term::Arr {
-                    value: Value::from(1),
-                }),
-                Box::new(Term::Arr {
-                    value: Value::from(2),
-                }),
-            ),
-            witness: None,
-        };
-        let path_w = Term::Path {
-            endpoints: (
-                Box::new(Term::Arr {
-                    value: Value::from(1),
-                }),
-                Box::new(Term::Arr {
-                    value: Value::from(2),
-                }),
-            ),
-            witness: Some(Box::new(Term::Arr {
-                value: Value::from(3),
-            })),
-        };
-        let equiv = Term::Equiv {
-            a: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            b: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-            path: None,
-        };
-        let cell_id = Term::CellId {
-            arrow: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-        };
-        let src = Term::Src {
-            cell: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-        };
-        let tgt = Term::Tgt {
-            cell: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-        };
-        let cell_comp_v = Term::CellCompV {
-            first: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            second: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let whisker = Term::Whisker {
-            side: Side::Left,
-            arrow: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            cell: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let record_proj = Term::RecordProj {
-            record: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            field: "x".into(),
-        };
-        let record_with = Term::RecordWith {
-            record: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            field: "x".into(),
-            value: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let tag = Term::Tag {
-            tag: "Foo".into(),
-            value: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-        };
-        let univalence = Term::Univalence {
-            equiv: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-        };
-        let glue = Term::Glue {
-            family: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            path: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let fibrant = Term::Fibrant {
-            base: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            family: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let jelim = Term::JElim {
-            path: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            motive: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-            base: Box::new(Term::Arr {
-                value: Value::from(3),
-            }),
-        };
-        let refine = Term::Refine {
-            sort: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            predicate: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
-        let cobind = Term::Cobind {
-            grade: Box::new(Term::Arr {
-                value: Value::from(1),
-            }),
-            body: Box::new(Term::Arr {
-                value: Value::from(2),
-            }),
-        };
+    fn c(n: i64) -> Term {
+        Term::Const {
+            value: Value::from(n),
+        }
+    }
 
+    fn dim1() -> Box<Term> {
+        Box::new(c(1))
+    }
+
+    /// One representative `Term` per variant of the kernel vocabulary.
+    ///
+    /// `TermData::from_term` documents itself as lossless, so every one of
+    /// these must survive `from_term` -> `to_term` unchanged.
+    ///
+    /// The module this replaces tested the pre-ADR-0119 shapes — `Arr { value }`
+    /// with no `dim`, plus the `Path`/`Equiv`/`Refine`/`CellId`/`JElim` variants
+    /// that ADR-0119 §7 folded into `Term::Opaque` — and had been disabled with
+    /// `#[cfg(any())]`, so it had not compiled or run for the whole transition.
+    fn sample_terms() -> Vec<(&'static str, Term)> {
+        let boxed = |t: Term| Box::new(t);
         vec![
-            ("Arr", arr),
-            ("Const", cst),
-            ("Op(native)", op),
-            ("Op(lit)", op_lit),
-            ("Op(foreign)", op_foreign),
-            ("Op(judgment)", op_judgment),
-            ("Op(dynamic)", op_dyn),
-            ("Seq", seq),
-            ("First", first),
-            ("Choice", choice),
-            ("Loop", loop_),
-            ("App", app),
-            ("Iter", iter),
-            ("Child", child),
-            ("Handle", handle),
-            ("Rewrite(Named)", rewrite),
-            ("Rewrite(Compute)", rewrite_compute),
-            ("Path", path),
-            ("Path(witness)", path_w),
-            ("Equiv", equiv),
-            ("CellId", cell_id),
-            ("Src", src),
-            ("Tgt", tgt),
-            ("CellCompV", cell_comp_v),
-            ("Whisker", whisker),
-            ("RecordProj", record_proj),
-            ("RecordWith", record_with),
-            ("Tag", tag),
-            ("Univalence", univalence),
-            ("Glue", glue),
-            ("Fibrant", fibrant),
-            ("JElim", jelim),
-            ("Refine", refine),
-            ("Cobind", cobind),
+            (
+                "Arr",
+                Term::Arr {
+                    dim: dim1(),
+                    value: Value::from(1),
+                },
+            ),
+            ("Const", c(42)),
+            (
+                "Op",
+                Term::Op {
+                    dim: dim1(),
+                    name: "add".into(),
+                    args: vec![c(1)],
+                    source: ArrSource::Native,
+                    lit: None,
+                },
+            ),
+            (
+                "Seq",
+                Term::Seq {
+                    axis: Box::new(c(0)),
+                    fst: boxed(c(1)),
+                    snd: boxed(c(2)),
+                },
+            ),
+            ("First", Term::First { inner: boxed(c(1)) }),
+            (
+                "Choice",
+                Term::Choice {
+                    l: boxed(c(1)),
+                    r: boxed(c(2)),
+                },
+            ),
+            ("Loop", Term::Loop { body: boxed(c(1)) }),
+            (
+                "App",
+                Term::App {
+                    callee: boxed(c(1)),
+                    args: vec![c(2)],
+                },
+            ),
+            (
+                "Iter",
+                Term::Iter {
+                    fuel: boxed(c(3)),
+                    predicate: boxed(c(1)),
+                    step: boxed(c(2)),
+                    initial: boxed(c(0)),
+                },
+            ),
+            ("Child", Term::Child { role: "subject".into() }),
+            (
+                "Handle",
+                Term::Handle {
+                    body: boxed(c(1)),
+                    target: "io".into(),
+                    impl_: boxed(c(2)),
+                },
+            ),
+            (
+                "Rewrite",
+                Term::Rewrite {
+                    source: boxed(c(1)),
+                    target: boxed(c(2)),
+                    witness: RewriteWitness::Compute,
+                },
+            ),
+            ("Src", Term::Src { cell: boxed(c(1)) }),
+            ("Tgt", Term::Tgt { cell: boxed(c(1)) }),
+            (
+                "RecordProj",
+                Term::RecordProj {
+                    record: boxed(c(1)),
+                    field: "x".into(),
+                },
+            ),
+            (
+                "RecordWith",
+                Term::RecordWith {
+                    record: boxed(c(1)),
+                    field: "x".into(),
+                    value: boxed(c(2)),
+                },
+            ),
+            (
+                "Tag",
+                Term::Tag {
+                    tag: "Foo".into(),
+                    value: boxed(c(1)),
+                },
+            ),
+            (
+                "Cobind",
+                Term::Cobind {
+                    grade: boxed(c(1)),
+                    body: boxed(c(2)),
+                },
+            ),
+            (
+                "Opaque",
+                Term::Opaque {
+                    data: json!({"__tag__": "Whisker", "side": "Left"}),
+                },
+            ),
         ]
     }
 
     #[test]
-    fn roundtrip_all_variants() {
-        for (label, term) in sample_terms() {
+    fn every_variant_round_trips_through_term_data() {
+        for (name, term) in sample_terms() {
             let data = TermData::from_term(&term);
-            assert_eq!(
-                data.to_term(),
-                Ok(term.clone()),
-                "round-trip failed for {label}"
-            );
+            // `Opaque` reproduces the folded record verbatim, so its tag is the
+            // *derived* operator's tag (`Whisker`), not `Opaque` — that is the
+            // ADR-0119 §7 fold: a derived operator survives as the same record
+            // the surface forms produce.
+            let expected_tag = match &term {
+                Term::Opaque { data } => data["__tag__"].as_str().unwrap().to_string(),
+                _ => name.to_string(),
+            };
+            assert_eq!(data.tag(), expected_tag, "tag mismatch for {name}");
+            let back = data
+                .to_term()
+                .unwrap_or_else(|e| panic!("{name}: to_term failed: {e}"));
+            assert_eq!(back, term, "{name} did not round-trip through TermData");
         }
     }
 
     #[test]
-    fn tag_access() {
-        assert_eq!(TermData::arr(5).tag(), "Arr");
-        assert_eq!(TermData::const_value(42).tag(), "Const");
-        assert!(TermData::arr(5).is_tag("Arr"));
-        assert!(!TermData::arr(5).is_tag("Seq"));
-    }
-
-    #[test]
-    fn field_access() {
-        let arr = TermData::arr(5);
-        assert_eq!(arr.get("value"), Some(&Value::from(5)));
-        assert_eq!(arr.get_str("value"), None);
-
-        let seq = TermData::seq(TermData::arr(1), TermData::arr(2));
-        assert_eq!(seq.get_term("fst").unwrap().tag(), "Arr");
-        assert_eq!(
-            seq.get_term("snd").unwrap().get("value"),
-            Some(&Value::from(2))
-        );
-
-        let op = TermData::op(
-            "add",
-            vec![TermData::arr(1), TermData::arr(2)],
-            &ArrSource::Native,
-            None,
-        );
-        assert_eq!(op.get_str("name"), Some("add"));
-        assert_eq!(op.get_term_list("args").len(), 2);
-        assert_eq!(op.get("lit"), Some(&Value::Null));
-    }
-
-    #[test]
-    fn constructor_shapes() {
-        // Arr
-        assert_eq!(TermData::arr(5).0, json!({ "__tag__": "Arr", "value": 5 }));
-        // Const
-        assert_eq!(
-            TermData::const_value(42).0,
-            json!({ "__tag__": "Const", "value": 42 })
-        );
-        // Op with lit
-        assert_eq!(
-            TermData::op("p", vec![], &ArrSource::Native, Some(Value::from("x"))).0,
-            json!({ "__tag__": "Op", "name": "p", "args": [], "source": "Native", "lit": "x" })
-        );
-        // Op foreign
-        assert_eq!(
-            TermData::op("io", vec![], &ArrSource::Foreign("io".into()), None).0,
-            json!({ "__tag__": "Op", "name": "io", "args": [], "source": { "__tag__": "Foreign", "value": "io" }, "lit": null })
-        );
-        // Seq
-        assert_eq!(
-            TermData::seq(TermData::arr(1), TermData::arr(2)).0,
-            json!({ "__tag__": "Seq", "fst": { "__tag__": "Arr", "value": 1 }, "snd": { "__tag__": "Arr", "value": 2 } })
-        );
-        // Child
-        assert_eq!(
-            TermData::child("value").0,
-            json!({ "__tag__": "Child", "role": "value" })
-        );
-        // Path with witness null
-        assert_eq!(
-            TermData::path(TermData::arr(1), TermData::arr(2), None).0,
-            json!({ "__tag__": "Path", "from": { "__tag__": "Arr", "value": 1 }, "to": { "__tag__": "Arr", "value": 2 }, "witness": null })
-        );
-        // Whisker
-        assert_eq!(
-            TermData::whisker(&Side::Left, TermData::arr(1), TermData::arr(2)).0,
-            json!({ "__tag__": "Whisker", "side": "Left", "arrow": { "__tag__": "Arr", "value": 1 }, "cell": { "__tag__": "Arr", "value": 2 } })
-        );
-        // Rewrite Named
-        assert_eq!(
-            TermData::rewrite(
-                TermData::arr(1),
-                TermData::arr(2),
-                &RewriteWitness::Named("comm".into())
-            )
-            .0,
-            json!({ "__tag__": "Rewrite", "source": { "__tag__": "Arr", "value": 1 }, "target": { "__tag__": "Arr", "value": 2 }, "witness": { "__tag__": "Named", "value": "comm" } })
-        );
-        // Rewrite Compute
-        assert_eq!(
-            TermData::rewrite(TermData::arr(1), TermData::arr(2), &RewriteWitness::Compute).0,
-            json!({ "__tag__": "Rewrite", "source": { "__tag__": "Arr", "value": 1 }, "target": { "__tag__": "Arr", "value": 2 }, "witness": { "__tag__": "Compute" } })
-        );
-    }
-
-    #[test]
-    fn serializable_via_serde_json() {
-        // TermData wraps a serde_json::Value, so it serializes as JSON.
-        let data = TermData::seq(TermData::arr(1), TermData::arr(2));
-        let json_str = serde_json::to_string(&data.0).unwrap();
-        let back: Value = serde_json::from_str(&json_str).unwrap();
-        assert_eq!(back, data.0);
-        // Round-trips through TermData.
-        let back_data = TermData(back);
-        assert_eq!(back_data.tag(), "Seq");
-        assert!(back_data.to_term().is_ok());
-    }
-
-    #[test]
-    fn unknown_tag_becomes_opaque() {
-        // ADR-0119 §7 fold: tags outside the kernel vocabulary are
-        // derived operators carried in data form (`Term::Opaque`), so
-        // `to_term` is total and round-trips the record exactly.
-        let bad = TermData(json!({ "__tag__": "Nope" }));
-        let term = bad.to_term().expect("unknown tag folds to Opaque");
-        assert_eq!(TermData::from_term(&term), bad);
-    }
-
-    #[test]
-    fn missing_tag_errors() {
-        let bad = TermData(json!({ "value": 5 }));
-        assert!(bad.to_term().is_err());
-    }
-
-    #[test]
-    fn arr_source_roundtrips() {
-        for source in [
-            ArrSource::Native,
-            ArrSource::Foreign("io".into()),
-            ArrSource::Judgment,
-            ArrSource::DynamicForeign,
-        ] {
-            let v = arr_source_to_value(&source);
-            assert_eq!(value_to_arr_source(Some(&v)), Ok(source.clone()));
-        }
-    }
-
-    #[test]
-    fn witness_roundtrips() {
-        for witness in [
-            RewriteWitness::Named("comm".into()),
-            RewriteWitness::Compute,
-            RewriteWitness::HandlerHint,
-            RewriteWitness::Cast,
-        ] {
-            let v = rewrite_witness_to_value(&witness);
-            assert_eq!(value_to_rewrite_witness(Some(&v)), Ok(witness.clone()));
-        }
-    }
-
-    #[test]
-    fn side_roundtrips() {
-        for side in [Side::Left, Side::Right] {
-            let v = side_to_value(&side);
-            assert_eq!(value_to_side(Some(&v)), Ok(side.clone()));
+    fn unknown_tag_decodes_to_opaque() {
+        // `to_term` is total: an unrecognised tagged record becomes `Opaque`,
+        // which is what makes the ADR-0119 §7 fold safe — a derived operator the
+        // bootstrap vocabulary does not know survives as data rather than
+        // failing the conversion.
+        let data = TermData(json!({
+            "__tag__": "SomeFutureOperator",
+            "x": 1,
+        }));
+        match data.to_term() {
+            Ok(Term::Opaque { data }) => {
+                assert_eq!(data["__tag__"], "SomeFutureOperator");
+            }
+            other => panic!("expected Opaque, got {other:?}"),
         }
     }
 }
