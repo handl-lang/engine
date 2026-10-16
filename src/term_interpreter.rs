@@ -483,6 +483,26 @@ fn eval_op(
             Ok(Value::Object(e))
         }
 
+        // `arr_len` — array length; `-1` on non-arrays so `match` pattern
+        // discriminants fall through to the next arm instead of erroring.
+        "arr_len" => Ok(match input.as_array() {
+            Some(a) => Value::from(a.len() as i64),
+            None => Value::from(-1),
+        }),
+
+        // `arr_drop` — `sv[lit..]` (the `[h, …t]` rest binder's tail).
+        "arr_drop" => {
+            let n = lit.and_then(Value::as_u64).unwrap_or(0) as usize;
+            match input.as_array() {
+                Some(a) => Ok(Value::Array(a.iter().skip(n).cloned().collect())),
+                None => Err("arr_drop: input is not an array".into()),
+            }
+        }
+
+        // `match_fail` — the `match` lowering's exhaust fallthrough;
+        // mirrors `match_shell`'s "no arm matched".
+        "match_fail" => Err("match: no arm matched".into()),
+
         // `truthy` — coerce the incoming value to a strict `Bool` (the
         // `&&`/`||` schemes' RHS arm; mirrors the `native_ops` op).
         "truthy" => Ok(Value::Bool(is_truthy(&input))),
