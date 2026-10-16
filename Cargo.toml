@@ -2,6 +2,9 @@
 name = "plugin-engine"
 version.workspace = true
 edition.workspace = true
+description = "Foundation types for pluggable interpretation and rewrite models."
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 handl-value = { path = "../handl-value" }
