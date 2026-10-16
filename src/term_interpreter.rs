@@ -460,6 +460,29 @@ fn eval_op(
             Ok(Value::Object(obj))
         }
 
+        // `loop_outcome` — the `while` fold's result mapping (the arrow-
+        // lowering counterpart of `loop_step_outcome` in
+        // `plugin-engine-exec`): `{state: v}` → `right(v)` (continue),
+        // `{out: v}` → `left(v)` (terminate), anything else → `left(v)`.
+        "loop_outcome" => {
+            if let Some(obj) = input.as_object() {
+                if let Some(st) = obj.get("state") {
+                    let mut e = Map::new();
+                    e.insert("__either__".to_string(), Value::from("right"));
+                    e.insert("value".to_string(), st.clone());
+                    return Ok(Value::Object(e));
+                }
+            }
+            let v = input
+                .as_object()
+                .and_then(|o| o.get("out").cloned())
+                .unwrap_or(input);
+            let mut e = Map::new();
+            e.insert("__either__".to_string(), Value::from("left"));
+            e.insert("value".to_string(), v);
+            Ok(Value::Object(e))
+        }
+
         // `truthy` — coerce the incoming value to a strict `Bool` (the
         // `&&`/`||` schemes' RHS arm; mirrors the `native_ops` op).
         "truthy" => Ok(Value::Bool(is_truthy(&input))),
