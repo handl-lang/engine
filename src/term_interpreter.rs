@@ -241,14 +241,14 @@ fn eval_op(
     match name {
         "id" => Ok(input),
 
-        "proj_child" => {
+        "elem" => {
             let idx =
                 lit.and_then(Value::as_u64)
-                    .ok_or_else(|| "proj_child: missing integer literal")? as usize;
+                    .ok_or_else(|| "elem: missing integer literal")? as usize;
             input
                 .as_array()
                 .and_then(|a| a.get(idx).cloned())
-                .ok_or_else(|| "proj_child: index out of bounds".into())
+                .ok_or_else(|| "elem: index out of bounds".into())
         }
 
         "eq" => {
