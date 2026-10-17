@@ -498,7 +498,7 @@ fn eval_op(
 
         "field_access" => {
             let target = args.first().ok_or_else(|| "field_access: missing target")?;
-            let v = interpret_with_handlers(target, input, handlers)?;
+            let v = interpret_with_handlers(target, input.clone(), handlers)?;
             match lit {
                 Some(Value::Number(n)) if n.is_u64() => {
                     let idx = n.as_u64().unwrap() as usize;
@@ -510,6 +510,23 @@ fn eval_op(
                     .get(s)
                     .cloned()
                     .ok_or_else(|| format!("field_access: no field {s}")),
+                // Computed index — `a[expr]` lowers to a second arg
+                // evaluated on the input (the `lower_field_access`
+                // dynamic-key form).
+                None if args.len() >= 2 => {
+                    let key = interpret_with_handlers(&args[1], input, handlers)?;
+                    match &key {
+                        Value::Number(n) if n.is_u64() => v
+                            .as_array()
+                            .and_then(|a| a.get(n.as_u64().unwrap() as usize).cloned())
+                            .ok_or_else(|| "field_access: index out of bounds".into()),
+                        Value::String(s) => v
+                            .get(s.as_str())
+                            .cloned()
+                            .ok_or_else(|| format!("field_access: no field {s}")),
+                        _ => Err("field_access: computed key is not a string/number".into()),
+                    }
+                }
                 _ => Err("field_access: missing/unsupported field literal".into()),
             }
         }
