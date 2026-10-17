@@ -402,6 +402,22 @@ fn eval_op(
             Ok(Value::Array(out))
         }
 
+        // `concat` — array concatenation, the lowering of spread elements:
+        // `[a, ...xs, b]` folds to `concat(concat([a], xs), [b])`. Operands
+        // evaluate against the incoming value like `array`'s; a non-array
+        // operand is pushed as-is, mirroring the AST `array` op's
+        // `...expr` rule (`pattern_match`'s rest-role flattening).
+        "concat" => {
+            let mut out = Vec::new();
+            for arg in args {
+                match interpret_with_handlers(arg, input.clone(), handlers)? {
+                    Value::Array(xs) => out.extend(xs),
+                    other => out.push(other),
+                }
+            }
+            Ok(Value::Array(out))
+        }
+
         "record" => {
             let mut obj = Map::new();
             if let Some(keys) = lit.and_then(Value::as_array) {
