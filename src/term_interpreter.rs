@@ -418,6 +418,23 @@ fn eval_op(
             Ok(Value::Array(out))
         }
 
+        // `record_merge` — object concatenation, the lowering of spread
+        // entries: `{a: 1, ...o, b: 2}` folds to
+        // `record_merge(record_merge({a: 1}, o), {b: 2})`. Later keys win
+        // and a non-object operand is ignored, mirroring the AST
+        // `object` op's `...expr` rule.
+        "record_merge" => {
+            let mut out = Map::new();
+            for arg in args {
+                if let Value::Object(m) = interpret_with_handlers(arg, input.clone(), handlers)? {
+                    for (k, v) in m {
+                        out.insert(k, v);
+                    }
+                }
+            }
+            Ok(Value::Object(out))
+        }
+
         "record" => {
             let mut obj = Map::new();
             if let Some(keys) = lit.and_then(Value::as_array) {
