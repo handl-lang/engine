@@ -257,7 +257,14 @@ fn eval_op(
             }
             let l = interpret_with_handlers(&args[0], input.clone(), handlers)?;
             let r = interpret_with_handlers(&args[1], input.clone(), handlers)?;
-            Ok(Value::Bool(l == r))
+            // `handl_value::eq` — the same equality the exec engines'
+            // `eq` op applies: cross-numeric (`Int(1) == Float(1.0)`),
+            // unordered objects, and tagged-variant markers decoded.
+            // Raw `serde_json` equality would split `1` from `1.0`.
+            Ok(Value::Bool(handl_value::eq(
+                &TaggedValue::from(l),
+                &TaggedValue::from(r),
+            )))
         }
 
         "gt" | "gte" | "lt" | "lte" => {
@@ -497,6 +504,61 @@ fn eval_op(
                 Some(a) => Ok(Value::Array(a.iter().skip(n).cloned().collect())),
                 None => Err("arr_drop: input is not an array".into()),
             }
+        }
+
+        // --- `match` pattern predicates (arrow-lowered `try_pattern`) ----
+        // These mirror `pattern_match::try_pattern`'s shape tests. They
+        // are *total* (a non-object input reports false, never an error)
+        // so a non-matching scrutinee falls through to the next arm —
+        // the `arr_len` → `-1` convention, extended to objects.
+        "is_obj" => Ok(Value::Bool(input.is_object())),
+
+        // `has_field[:k]` — the input is an object *and* carries key `k`.
+        "has_field" => {
+            let key = lit
+                .and_then(Value::as_str)
+                .ok_or_else(|| "has_field: missing key literal")?;
+            Ok(Value::Bool(
+                input.as_object().map(|o| o.contains_key(key)) == Some(true),
+            ))
+        }
+
+        // `tag_fields` — the tag-pattern binders' payload source
+        // (ADR-0077): the input object's non-`__tag__` values, sorted by
+        // key — positional binding mirrors `try_tag_pattern`'s
+        // `payload_fields`. Only consulted by binder paths behind a
+        // `has_field "__tag__"` guard, so a non-object input errors.
+        "tag_fields" => {
+            let obj = input
+                .as_object()
+                .ok_or_else(|| "tag_fields: input is not an object")?;
+            let mut fields: Vec<(&String, &Value)> = obj
+                .iter()
+                .filter(|(k, _)| k.as_str() != "__tag__")
+                .collect();
+            fields.sort_by(|a, b| a.0.cmp(b.0));
+            Ok(Value::Array(
+                fields.into_iter().map(|(_, v)| v.clone()).collect(),
+            ))
+        }
+
+        // `obj_except[:keys]` — the object-pattern `...rest` binder's
+        // payload: the input object minus the listed (matched) keys.
+        // Evaluated lazily from an arm body, so a non-object input errors.
+        "obj_except" => {
+            let keys = lit
+                .and_then(Value::as_array)
+                .ok_or_else(|| "obj_except: missing keys literal")?;
+            let obj = input
+                .as_object()
+                .ok_or_else(|| "obj_except: input is not an object")?;
+            let mut out = Map::new();
+            for (k, v) in obj {
+                if !keys.iter().any(|k2| k2.as_str() == Some(k.as_str())) {
+                    out.insert(k.clone(), v.clone());
+                }
+            }
+            Ok(Value::Object(out))
         }
 
         // `match_fail` — the `match` lowering's exhaust fallthrough;
