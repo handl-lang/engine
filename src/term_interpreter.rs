@@ -315,6 +315,34 @@ fn eval_op(
             for arg in args {
                 values.push(interpret_with_handlers(arg, input.clone(), handlers)?);
             }
+            // Mirror the exec engines' `Num` arithmetic
+            // (`plugin-engine-exec`'s `Num::{Add,Sub,Mul,Div}` and the
+            // `div` op's zero-divisor error): all-integer operands stay
+            // in i64 — including *integer division* — while any Float
+            // operand promotes the whole fold to f64, and a float result
+            // keeps its Float repr even when whole. The previous
+            // f64-fold-then-truncate disagreed with the engines on both
+            // counts (`7 / 2` → `3.5` vs `3`; `2.5 + 0.5` → `3` vs `3.0`).
+            if values.iter().all(|v| v.as_i64().is_some()) {
+                let mut iter = values.into_iter();
+                let mut result = iter.next().unwrap().as_i64().unwrap();
+                for v in iter {
+                    let n = v.as_i64().unwrap();
+                    match name {
+                        "add" => result += n,
+                        "mul" => result *= n,
+                        "sub" => result -= n,
+                        "div" => {
+                            if n == 0 {
+                                return Err("div: division by zero".into());
+                            }
+                            result /= n;
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                return Ok(Value::Number(Number::from(result)));
+            }
             let mut iter = values.into_iter();
             let first = iter.next().unwrap();
             let mut result = first
@@ -328,18 +356,18 @@ fn eval_op(
                     "add" => result += n,
                     "mul" => result *= n,
                     "sub" => result -= n,
-                    "div" => result /= n,
+                    "div" => {
+                        if n == 0.0 {
+                            return Err("div: division by zero".into());
+                        }
+                        result /= n;
+                    }
                     _ => unreachable!(),
                 }
             }
-            // Preserve integers when the result is whole.
-            if result == result.trunc() && result <= i64::MAX as f64 && result >= i64::MIN as f64 {
-                Ok(Value::Number(Number::from(result as i64)))
-            } else {
-                Number::from_f64(result)
-                    .map(Value::Number)
-                    .ok_or_else(|| format!("{name}: invalid numeric result"))
-            }
+            Number::from_f64(result)
+                .map(Value::Number)
+                .ok_or_else(|| format!("{name}: invalid numeric result"))
         }
 
         "json" => {
@@ -359,6 +387,13 @@ fn eval_op(
             serde_json::from_str::<Value>(&s).map_err(|e| format!("json: parse error: {e}"))
         }
 
+        // `product`/`fanout`/`array` all produce plain arrays here —
+        // internal dispatch pairs (`product`) are consumed by `elem`
+        // indexing, which requires the `[a, b]` shape. NOTE: this makes
+        // a lowered `***` serialize as `[a, b]` while the exec engines'
+        // `product` op yields `TaggedValue::Pair` → `{"__pair__": [a, b]}`
+        // — a known interpreter↔engine representation gap, pinned in
+        // `handl-runtime/tests/engine_parity.rs`.
         "product" | "fn.fanout_fn" | "fanout" | "array" => {
             let mut out = Vec::with_capacity(args.len());
             for arg in args {
