@@ -1,12 +1,15 @@
 [package]
-name = "plugin-engine"
-version.workspace = true
-edition.workspace = true
+name = "hnl-engine"
+version = "0.1.0"
+edition = "2024"
 description = "Foundation types for pluggable interpretation and rewrite models."
-license.workspace = true
-repository.workspace = true
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/handl-lang/engine"
 
 [dependencies]
-handl-value = { path = "../handl-value" }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
+handl-value = { git = "https://github.com/handl-lang/kernel", branch = "main" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[patch."https://github.com/handl-lang/kernel"]
+handl-value = { path = "../kernel/crates/handl-value" }

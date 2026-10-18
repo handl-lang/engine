@@ -66,7 +66,7 @@ impl TermData {
 
     /// Whether this `TermData` carries a HoTT-specific tag (ADR-0103).
     ///
-    /// Data-driven counterpart of `plugin_engine::is_hott_tag(&Term)`: the
+    /// Data-driven counterpart of `hnl_engine::is_hott_tag(&Term)`: the
     /// same tag set (Path, Equiv, CellId, Src, Tgt, CellCompV, Whisker,
     /// Univalence, Glue, Fibrant, JElim, Refine, Cobind, Rewrite) is matched
     /// against the `"__tag__"` field instead of the `Term` enum.
@@ -531,12 +531,12 @@ impl TermData {
 /// Serialize a `Term` to the ADR-0103 tagged-record `Value` shape.
 ///
 /// This is the canonical conversion shared with
-/// `plugin_lib_handl::model::term_to_value`. Kept here so `plugin-engine`
+/// `plugin_lib_handl::model::term_to_value`. Kept here so `hnl-engine`
 /// can convert without depending on `plugin-lib-handl`.
 /// Serialize a `Term` to the ADR-0103 tagged-record `Value` shape.
 ///
 /// This is the canonical conversion shared with
-/// `plugin_lib_handl::model::term_to_value`. Kept here so `plugin-engine`
+/// `plugin_lib_handl::model::term_to_value`. Kept here so `hnl-engine`
 /// can convert without depending on `plugin-lib-handl`.
 fn term_to_value(term: &Term) -> Value {
     match term {

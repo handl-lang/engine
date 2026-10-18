@@ -355,7 +355,7 @@ fn eval_op(
                 values.push(interpret_with_handlers(arg, input.clone(), handlers)?);
             }
             // Mirror the exec engines' `Num` arithmetic
-            // (`plugin-engine-exec`'s `Num::{Add,Sub,Mul,Div}` and the
+            // (`hnl-engine-exec`'s `Num::{Add,Sub,Mul,Div}` and the
             // `div` op's zero-divisor error): all-integer operands stay
             // in i64 — including *integer division* — while any Float
             // operand promotes the whole fold to f64, and a float result
@@ -593,7 +593,7 @@ fn eval_op(
 
         // `loop_outcome` — the `while` fold's result mapping (the arrow-
         // lowering counterpart of `loop_step_outcome` in
-        // `plugin-engine-exec`): `{state: v}` → `right(v)` (continue),
+        // `hnl-engine-exec`): `{state: v}` → `right(v)` (continue),
         // `{out: v}` → `left(v)` (terminate), anything else → `left(v)`.
         "loop_outcome" => {
             if let Some(obj) = input.as_object() {

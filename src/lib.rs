@@ -1,4 +1,4 @@
-//! # plugin-engine
+//! # hnl-engine
 //!
 //! Foundation types for pluggable interpretation and rewrite models.
 
@@ -15,15 +15,15 @@ pub use term_interpreter::interpret;
 /// A reference to a node in an AST arena.
 ///
 /// The real AST type lives in `handl-language` (`handl_language::AstRef`, a
-/// `usize` newtype); `plugin-engine` cannot name that type without creating
-/// a dependency cycle (`handl-language` already depends on `plugin-engine`
+/// `usize` newtype); `hnl-engine` cannot name that type without creating
+/// a dependency cycle (`handl-language` already depends on `hnl-engine`
 /// for [`Term`]), so the handle is exposed here as the bare arena index.
 pub type AstRef = usize;
 
 /// Placeholder marker for an AST node in [`ModelCtx`].
 ///
 /// The concrete node type is `handl_language::AstNode`, which
-/// `plugin-engine` cannot name without a dependency cycle. `Model` impls
+/// `hnl-engine` cannot name without a dependency cycle. `Model` impls
 /// cannot inspect it yet — it only keeps the reference alive. Node access
 /// goes through [`AstView`] instead.
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ pub struct AstNode;
 /// A minimal, object-safe view over a language definition.
 ///
 /// Implemented by `handl_language::Language` (in `handl-language`, which
-/// already depends on `plugin-engine`, so no cycle is introduced).
+/// already depends on `hnl-engine`, so no cycle is introduced).
 /// [`Model`] impls use this to resolve AST child positions by named role
 /// (ADR-0081) and to look up eval schemes / type rules by node kind —
 /// never hardcoded `kind ==` checks.
