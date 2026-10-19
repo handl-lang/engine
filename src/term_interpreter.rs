@@ -902,17 +902,20 @@ fn is_truthy(value: &Value) -> bool {
     }
 }
 
-/// Whether `v` is an object *as the engines' `try_object_pattern` sees
-/// it*: `TaggedValue::Obj` after the wire-shape decode, which excludes
-/// the `__pair__`/`__either__`/`__bytes__`/`__sym__`/`__arrow__`/
-/// `__resource__` marker records (they decode to non-Obj variants).
-/// A raw `serde_json::Value::is_object` would count a `{"__pair__": …}`
-/// wire pair as an object the engines never pattern-match.
+/// Whether `v` presents an object *as the engines' `try_object_pattern`
+/// sees it*: the tagged-object view ([`TaggedValue::object_view`],
+/// ADR-0083 §2.1) of the wire-shape decode — `Obj` decodings plus the
+/// *opaque* variants (`__bytes__`/`__sym__`/`__resource__`/`__tensor__`
+/// marker records), which project their canonical wire record for field
+/// reads and record destructuring. `__pair__`/`__either__`/`__arrow__`
+/// decodings carry their own `.hnl` projections and still report false.
 fn tagged_is_obj(v: &Value) -> bool {
-    matches!(TaggedValue::from(v.clone()), TaggedValue::Obj(_))
+    TaggedValue::from(v.clone()).object_view().is_some()
 }
 
-/// The object map of `v` when [`tagged_is_obj`] holds.
+/// The object map of `v` when [`tagged_is_obj`] holds — at the `Value`
+/// boundary the wire form *is* the projected record, so no re-encode is
+/// needed.
 fn tagged_obj(v: &Value) -> Option<&Map<String, Value>> {
     if tagged_is_obj(v) {
         v.as_object()
