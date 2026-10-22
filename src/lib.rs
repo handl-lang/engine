@@ -2,6 +2,7 @@
 //!
 //! Foundation types for pluggable interpretation and rewrite models.
 
+pub mod nbe;
 pub mod term;
 pub mod term_data;
 pub mod term_interpreter;
