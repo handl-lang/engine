@@ -42,7 +42,21 @@ pub fn interpret_with_handlers(
             let d = term_dim(fst);
             if k == 0 && d <= 1 {
                 let v = interpret_with_handlers(fst, input, handlers)?;
-                interpret_with_handlers(snd, v, handlers)
+                let out = interpret_with_handlers(snd, v.clone(), handlers)?;
+                // `>>>` on cell *operands* composes — the same seam
+                // `nbe::eval` keeps: a `snd` that is itself an operand
+                // term (`Arr`/`Const` never read the incoming) whose
+                // evaluated operand is morphism-like alongside `v`
+                // means both sides were cells, so the result is the
+                // `∘₀` composite (`Arrow{first, second}`), not `snd`'s
+                // value alone with `fst` silently dropped.
+                if matches!(snd.as_ref(), Term::Arr { .. } | Term::Const { .. })
+                    && is_morphism_json(&v)
+                    && is_morphism_json(&out)
+                {
+                    return cell_comp_axis(0, 1, &v, &out);
+                }
+                Ok(out)
             } else {
                 // Globular pasting: both operands evaluate against the
                 // same input, and the *effective* dimension is the
@@ -189,6 +203,31 @@ fn apply_arrow(
     }
 
     Err(format!("App: callee is not an arrow value: {callee_val}"))
+}
+
+/// Whether `v` denotes a cell/morphism *value* — the `>>>`-composable
+/// side of the `flow` dispatch widened to the `Cell`/`__dim__` n-cell
+/// shapes: an arrow-like record or serialized term
+/// ([`is_arrow_value`]), a `{"__arrow__": …}` closure decode, or an
+/// n-cell record (`__dim__`/`__src__`/`Cell`/`Cell2`/`dim_arrow`). The
+/// `Seq{0}` cell route consults it alongside the operand's term shape.
+fn is_morphism_json(v: &Value) -> bool {
+    if is_arrow_value(v) {
+        return true;
+    }
+    if let Some(obj) = v.as_object() {
+        if obj.contains_key("__arrow__")
+            || obj.contains_key("__dim__")
+            || obj.contains_key("__src__")
+            || matches!(
+                obj.get("__tag__").and_then(|t| t.as_str()),
+                Some("Cell") | Some("Cell2")
+            )
+        {
+            return true;
+        }
+    }
+    matches!(TaggedValue::from(v.clone()), TaggedValue::Arrow { .. })
 }
 
 /// Whether `v` is an arrow *value* the `flow` dispatch can compose —

@@ -125,7 +125,26 @@ pub fn eval(term: &Term, input: Val, ops: &dyn OpHandler) -> Result<Val, EvalErr
             let d = fst.globular_dim();
             if k == 0 && d <= 1 {
                 let mid = eval(fst, input, ops)?;
-                eval(snd, mid, ops)
+                let out = eval(snd, mid.clone(), ops)?;
+                // `f >>> g` on *cell operands* is composition, not
+                // threading (0106 amendment): a `snd` that is itself an
+                // operand term — `Arr`/`Const` hold a value and never
+                // read the incoming — means both sides evaluated to
+                // cells, so the `>>>` forms the ∘₀ composite through
+                // the same `cell_comp_axis` seam the globular route
+                // delegates to (`Hom(1,a,b) ∘ Hom(1,b,c)` per the
+                // checker's rule; `Const` payloads take the kernel's
+                // `Arrow{first, second}` mint, matching the exec
+                // engines' `flow` arm). An input-consuming `snd` (an
+                // op/scheme) keeps the pipeline reading — `mid` is
+                // threaded data, not a composable cell.
+                if matches!(snd.as_ref(), Term::Arr { .. } | Term::Const { .. })
+                    && is_cell_val(&mid)
+                    && is_cell_val(&out)
+                {
+                    return compose_cell_vals(0, d, axis, &mid, &out, ops);
+                }
+                Ok(out)
             } else {
                 let a = eval(fst, input.clone(), ops)?;
                 let b = eval(snd, input, ops)?;
@@ -214,6 +233,79 @@ pub fn eval(term: &Term, input: Val, ops: &dyn OpHandler) -> Result<Val, EvalErr
         Term::Cobind { .. } => Err(EvalError::NotImplemented("cobind")),
         Term::Opaque { .. } => Err(EvalError::NotImplemented("opaque")),
     }
+}
+
+/// Whether `v` denotes a *cell* — a morphism value rather than plain
+/// data (ADR-0106: `>>>` on cells composes, it does not apply). A
+/// domain arrow (`Val::Arrow`), a cell former application
+/// (`cell.comp`/`cell.id` — `>>>`/`id_k` composite data), or a
+/// boundary `TaggedValue` carrying an arrow/cell record:
+/// `__arrow__` closures, `{"__tag__": "Arrow", first|inputs}`
+/// composites and `dim_arrow`s, `Cell`/`Cell2`/`__dim__`/`__src__`
+/// n-cells. Neutrals (`Rigid`/`Flex`/`Unfold`) stay non-cells — their
+/// cell-ness lives in their checker-side type, so `>>>` on an open
+/// operand keeps the declared-dimension route (the `d > 1` paste).
+pub fn is_cell_val(v: &Val) -> bool {
+    match v {
+        Val::Arrow(_) => true,
+        Val::Former { head, .. } => {
+            let h = head.handle();
+            h == handl_value::Sym::seeded("cell.comp").handle()
+                || h == handl_value::Sym::seeded("cell.id").handle()
+        }
+        Val::Const(tv) => is_cell_tagged(tv),
+        _ => false,
+    }
+}
+
+/// The boundary-value half of [`is_cell_val`] — mirrors the exec
+/// engines' `is_arrow_like` plus the `Cell`/`__dim__` n-cell shapes
+/// `handl_value::cell_dim` recognizes.
+fn is_cell_tagged(tv: &TaggedValue) -> bool {
+    match tv {
+        TaggedValue::Arrow { .. } => true,
+        TaggedValue::Obj(m) => {
+            let tag = m.get("__tag__").and_then(|t| t.as_str());
+            (tag == Some("Arrow")
+                && (m.get("first").is_some() || m.get("inputs").is_some()))
+                || tag == Some("Cell")
+                || tag == Some("Cell2")
+                || m.get("__dim__").is_some()
+                || m.get("__src__").is_some()
+        }
+        _ => false,
+    }
+}
+
+/// Axis-0 composition of two evaluated cell operands (the `Seq{0}`
+/// cell route). `Const` payloads compose in the kernel's value model —
+/// `handl_value::cell_comp_axis(0, ·)` mints the `Arrow{first, second}`
+/// composite (and pastes `Cell`/`__dim__` records at their own
+/// height), the same data the exec `flow` arm produces. Domain cells
+/// delegate to the `cell_comp_axis` op — the owning checker's
+/// `infer_comp_axis` decides the `Hom(1,a,b) ∘ Hom(1,b,c)` boundary
+/// law and mints `Former{cell.comp}` (or reports honestly).
+pub fn compose_cell_vals(
+    axis: u64,
+    declared_dim: u64,
+    axis_term: &Term,
+    a: &Val,
+    b: &Val,
+    ops: &dyn OpHandler,
+) -> Result<Val, EvalError> {
+    if let (Val::Const(ta), Val::Const(tb)) = (a, b) {
+        return handl_value::cell_comp_axis(axis, declared_dim.max(1), ta, tb)
+            .map(Val::Const)
+            .map_err(EvalError::Op);
+    }
+    let lit = serde_json::json!({"axis": axis, "dim": declared_dim});
+    ops.op(
+        "cell_comp_axis",
+        &[a.clone(), b.clone()],
+        Some(&lit),
+        axis_term,
+        Val::Const(TaggedValue::Null),
+    )
 }
 
 /// Reify a `Val` to the `TaggedValue` boundary encoding — the local
