@@ -715,6 +715,45 @@ fn eval_op(
             ))
         }
 
+        // `ctor_name` — the constructor-object discriminant (ADR-0152
+        // §2, `try_ctor_object_pattern`): an input object whose
+        // `__ctor__` is a `{"__sym__": {"name": n, …}}` sym literal
+        // yields `n`; every other input yields `null`, so the lowered
+        // `eq(ctor_name(v), "C")` check is *total* — a non-ctor
+        // scrutinee falls through to the next arm instead of erroring
+        // on a field projection.
+        "ctor_name" => {
+            let name = input
+                .as_object()
+                .and_then(|o| o.get("__ctor__"))
+                .and_then(|c| c.as_object())
+                .and_then(|c| c.get("__sym__"))
+                .and_then(|s| s.as_object())
+                .and_then(|s| s.get("name"))
+                .and_then(|n| n.as_str())
+                .map(str::to_string);
+            Ok(name.map_or(Value::Null, Value::String))
+        }
+
+        // `ctor_fields` — the ctor-object pattern's sorted-field
+        // fallback for positional binding
+        // (`try_ctor_object_pattern`'s `sorted_fields`): the input
+        // object's non-`__ctor__`/`type` values, sorted by key. Only
+        // consulted behind the `ctor_name` check, so a non-object
+        // input errors like `tag_fields`.
+        "ctor_fields" => {
+            let obj = tagged_obj(&input)
+                .ok_or_else(|| "ctor_fields: input is not an object")?;
+            let mut fields: Vec<(&String, &Value)> = obj
+                .iter()
+                .filter(|(k, _)| k.as_str() != "__ctor__" && k.as_str() != "type")
+                .collect();
+            fields.sort_by(|a, b| a.0.cmp(b.0));
+            Ok(Value::Array(
+                fields.into_iter().map(|(_, v)| v.clone()).collect(),
+            ))
+        }
+
         // `tag_fields` — the tag-pattern binders' payload source
         // (ADR-0077): the input object's non-`__tag__` values, sorted by
         // key — positional binding mirrors `try_tag_pattern`'s
