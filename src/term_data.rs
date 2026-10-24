@@ -46,7 +46,12 @@ use crate::term::{ArrSource, RewriteWitness, Side, Term};
 /// [`TermData::from_term`]. Inspect the tag with [`TermData::tag`] and access
 /// fields with [`TermData::get`] / [`TermData::get_term`] / [`TermData::get_str`]
 /// / [`TermData::get_term_list`].
+/// `repr(transparent)` makes [`TermData::view`] — borrowing a
+/// `serde_json::Value` as a `&TermData` — a zero-cost cast, so the
+/// interpreter hot paths can recurse through scheme structure without
+/// the deep `Value` clone `get_term` performs.
 #[derive(Debug, Clone, PartialEq)]
+#[repr(transparent)]
 pub struct TermData(pub Value);
 
 impl TermData {
@@ -100,6 +105,36 @@ impl TermData {
     /// Get a field as a `TermData` (for nested terms).
     pub fn get_term(&self, field: &str) -> Option<TermData> {
         self.0.get(field).map(|v| TermData(v.clone()))
+    }
+
+    /// Borrow a `serde_json::Value` as a `&TermData` — zero-cost view
+    /// (`repr(transparent)` layout guarantee). Use for interpreter
+    /// recursion that only inspects the record; `get_term`'s deep clone
+    /// is only needed when the sub-term must outlive the borrow or be
+    /// stored.
+    #[inline]
+    pub fn view(v: &Value) -> &TermData {
+        // SAFETY: `TermData` is `repr(transparent)` over `Value` — same
+        // size, alignment, and layout; a `&Value` is a valid `&TermData`.
+        unsafe { &*(v as *const Value as *const TermData) }
+    }
+
+    /// Borrowed [`get_term`](Self::get_term): a view into this record's
+    /// field — no clone. The hot-path accessor for scheme recursion.
+    #[inline]
+    pub fn get_term_view(&self, field: &str) -> Option<&TermData> {
+        self.0.get(field).map(TermData::view)
+    }
+
+    /// Borrowed [`get_term_list`](Self::get_term_list): views into this
+    /// record's array field — no clones.
+    #[inline]
+    pub fn get_term_view_list(&self, field: &str) -> Vec<&TermData> {
+        self.0
+            .get(field)
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().map(TermData::view).collect())
+            .unwrap_or_default()
     }
 
     /// Get a field as a string.
