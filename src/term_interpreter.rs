@@ -11,6 +11,18 @@ use serde_json::{Map, Number, Value, from_value};
 
 use crate::{ArrSource, Term};
 
+/// Remaining-stack budget at which [`stacker::maybe_grow`] moves the next
+/// interpreter call onto a fresh segment. Mirrors the
+/// `hnl-engine-typecheck-nbe` constants: deep `Term` graphs (bound-arrow
+/// `__term__` recursion, `Type.rec` recursors, deep `Seq`/`Op` spines)
+/// recurse natively in [`interpret_with_handlers`], so eval depth is
+/// bounded by total growable stack, not the platform stack.
+const STACK_RED_ZONE: usize = 4 * 1024 * 1024;
+
+/// Fresh stack segment allocated by [`stacker::maybe_grow`] on overflow
+/// (see [`STACK_RED_ZONE`]).
+const STACK_SEGMENT: usize = 8 * 1024 * 1024;
+
 /// Interpret a `Term` as an arrow from `input` to a result value.
 ///
 /// Returns `Err` for unsupported `Term` variants or operator names, which is
@@ -25,6 +37,22 @@ pub fn interpret(term: &Term, input: Value) -> Result<Value, String> {
 /// by `Term::Handle` to install handlers and by `Term::Op` to dispatch graded
 /// operations.
 pub fn interpret_with_handlers(
+    term: &Term,
+    input: Value,
+    handlers: &HashMap<String, Value>,
+) -> Result<Value, String> {
+    // Growable-stack seam (see `STACK_RED_ZONE`): every recursive eval
+    // cycle — `App` → `apply_arrow` → `interpret_with_handlers`, nested
+    // `Seq`/`Op` operand evals — re-enters here, so checking at this one
+    // funnel bounds every level.
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, || {
+        interpret_with_handlers_inner(term, input, handlers)
+    })
+}
+
+/// The recursive body of [`interpret_with_handlers`], run under
+/// [`stacker::maybe_grow`].
+fn interpret_with_handlers_inner(
     term: &Term,
     input: Value,
     handlers: &HashMap<String, Value>,
@@ -159,6 +187,20 @@ pub fn interpret_with_handlers(
 /// values (`Arr` quotes). Host-function string callees need a module
 /// registry this interpreter does not carry, so they report clearly.
 fn apply_arrow(
+    callee_val: &Value,
+    arg_input: Value,
+    handlers: &HashMap<String, Value>,
+) -> Result<Value, String> {
+    // Composite `first`/`second` chains recurse within `apply_arrow`
+    // itself — same growable-stack seam as the interpreter.
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_SEGMENT, || {
+        apply_arrow_inner(callee_val, arg_input, handlers)
+    })
+}
+
+/// The recursive body of [`apply_arrow`], run under
+/// [`stacker::maybe_grow`].
+fn apply_arrow_inner(
     callee_val: &Value,
     arg_input: Value,
     handlers: &HashMap<String, Value>,
