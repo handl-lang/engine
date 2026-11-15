@@ -1067,4 +1067,32 @@ mod tests {
         let back: Term = serde_json::from_str(&j).unwrap();
         assert_eq!(s, back);
     }
+
+    #[test]
+    fn op_attrs_serde_contract() {
+        // ADR-0173: `attrs: None` serializes byte-identically to the
+        // pre-attrs shape, and old JSON (no `attrs` key) parses with
+        // `attrs = None`.
+        let t = Term::op_native("add", vec![Term::constant(1)]);
+        let j = serde_json::to_string(&t).unwrap();
+        assert!(!j.contains("attrs"), "None attrs must not serialize: {j}");
+        let back: Term = serde_json::from_str(&j).unwrap();
+        assert_eq!(t, back);
+
+        // Old-shape JSON (no attrs key) parses.
+        let old = r#"{"Op":{"dim":{"Const":{"value":1}},"name":"add","args":[],"source":"Native"}}"#;
+        let t2: Term = serde_json::from_str(old).unwrap();
+        assert!(matches!(
+            t2,
+            Term::Op {
+                attrs: None, ..
+            }
+        ));
+
+        // A payload round-trips.
+        let t3 = Term::op_native_attrs("tensor.conv", vec![], serde_json::json!({"k": 1}));
+        let j3 = serde_json::to_string(&t3).unwrap();
+        let back3: Term = serde_json::from_str(&j3).unwrap();
+        assert_eq!(t3, back3);
+    }
 }
