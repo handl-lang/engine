@@ -551,6 +551,7 @@ mod tests {
             args: vec![const_t(serde_json::json!("x"))],
             source: ArrSource::Judgment,
             lit: None,
+            attrs: None,
         };
         // `id` ignores args, returns input.
         let v = eval(&t, Val::Const(TaggedValue::Int(9)), &NativeOnly).unwrap();

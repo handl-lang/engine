@@ -67,6 +67,16 @@ pub enum Term {
         /// stays a pure list of sub-schemes.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lit: Option<Value>,
+        /// Optional declarative op metadata (ADR-0173).
+        ///
+        /// `attrs` is node *identity* metadata: `(op, children, attrs)`
+        /// is the e-node key wherever `Term` feeds an e-graph. The kernel
+        /// keeps it untyped (`Option<Value>`); schemas are declared by
+        /// `Language` fragment data (ADR-0044). Serialization of a term
+        /// with `attrs: None` is byte-identical to the pre-attrs shape;
+        /// old JSON parses with `attrs = None`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attrs: Option<Value>,
     },
 
     /// `>>>[k]` — composition along axis `k` (ADR-0120 Phase 2).
@@ -380,6 +390,7 @@ impl Term {
             args,
             source: ArrSource::Native,
             lit: None,
+            attrs: None,
         }
     }
 
@@ -405,6 +416,7 @@ impl Term {
             args,
             source: ArrSource::Native,
             lit: None,
+            attrs: None,
         }
     }
 
@@ -417,6 +429,7 @@ impl Term {
             args,
             source: ArrSource::Foreign(name),
             lit: None,
+            attrs: None,
         }
     }
 
@@ -433,6 +446,7 @@ impl Term {
             args,
             source: ArrSource::Native,
             lit: Some(lit.into()),
+            attrs: None,
         }
     }
 
@@ -454,6 +468,7 @@ impl Term {
             args,
             source: ArrSource::Judgment,
             lit: None,
+            attrs: None,
         }
     }
 
@@ -474,12 +489,144 @@ impl Term {
             args,
             source: ArrSource::Judgment,
             lit: Some(lit.into()),
+            attrs: None,
         }
     }
 
     /// Backward-compatible alias for [`Term::op_judgment_lit`].
     pub fn arr_judgment_lit(op: impl Into<String>, args: Vec<Term>, lit: impl Into<Value>) -> Self {
         Term::op_judgment_lit(op, args, lit)
+    }
+
+    /// Convenience constructor for a native `op` carrying declarative attrs (ADR-0173).
+    ///
+    /// `attrs` is untyped node-identity metadata — `(name, args, attrs)` is
+    /// the e-node key. See [`Term::Op::attrs`].
+    pub fn op_native_attrs(
+        name: impl Into<String>,
+        args: Vec<Term>,
+        attrs: impl Into<Value>,
+    ) -> Self {
+        Term::Op {
+            dim: Self::default_dim(),
+            name: name.into(),
+            args,
+            source: ArrSource::Native,
+            lit: None,
+            attrs: Some(attrs.into()),
+        }
+    }
+
+    /// Convenience constructor for a native `op` at an explicit dimension
+    /// carrying declarative attrs (ADR-0173).
+    pub fn op_native_dim_attrs(
+        name: impl Into<String>,
+        dim: Term,
+        args: Vec<Term>,
+        attrs: impl Into<Value>,
+    ) -> Self {
+        Term::Op {
+            dim: Box::new(dim),
+            name: name.into(),
+            args,
+            source: ArrSource::Native,
+            lit: None,
+            attrs: Some(attrs.into()),
+        }
+    }
+
+    /// Convenience constructor for a foreign `op` carrying declarative attrs (ADR-0173).
+    pub fn op_foreign_attrs(
+        name: impl Into<String>,
+        args: Vec<Term>,
+        attrs: impl Into<Value>,
+    ) -> Self {
+        let name = name.into();
+        Term::Op {
+            dim: Self::default_dim(),
+            name: name.clone(),
+            args,
+            source: ArrSource::Foreign(name),
+            lit: None,
+            attrs: Some(attrs.into()),
+        }
+    }
+
+    /// Convenience constructor for a native `op` carrying both a literal
+    /// payload and declarative attrs (ADR-0173).
+    pub fn op_native_lit_attrs(
+        name: impl Into<String>,
+        args: Vec<Term>,
+        lit: impl Into<Value>,
+        attrs: impl Into<Value>,
+    ) -> Self {
+        Term::Op {
+            dim: Self::default_dim(),
+            name: name.into(),
+            args,
+            source: ArrSource::Native,
+            lit: Some(lit.into()),
+            attrs: Some(attrs.into()),
+        }
+    }
+
+    /// Convenience constructor for a typecheck judgment `op` carrying
+    /// declarative attrs (ADR-0173).
+    pub fn op_judgment_attrs(
+        name: impl Into<String>,
+        args: Vec<Term>,
+        attrs: impl Into<Value>,
+    ) -> Self {
+        Term::Op {
+            dim: Self::default_dim(),
+            name: name.into(),
+            args,
+            source: ArrSource::Judgment,
+            lit: None,
+            attrs: Some(attrs.into()),
+        }
+    }
+
+    /// Convenience constructor for a typecheck judgment `op` carrying both
+    /// a literal payload and declarative attrs (ADR-0173).
+    pub fn op_judgment_lit_attrs(
+        name: impl Into<String>,
+        args: Vec<Term>,
+        lit: impl Into<Value>,
+        attrs: impl Into<Value>,
+    ) -> Self {
+        Term::Op {
+            dim: Self::default_dim(),
+            name: name.into(),
+            args,
+            source: ArrSource::Judgment,
+            lit: Some(lit.into()),
+            attrs: Some(attrs.into()),
+        }
+    }
+
+    /// Set the declarative attrs slot on an `Op` term (ADR-0173).
+    ///
+    /// Returns `self` unchanged for non-`Op` terms.
+    pub fn with_attrs(self, attrs: impl Into<Value>) -> Self {
+        match self {
+            Term::Op {
+                dim,
+                name,
+                args,
+                source,
+                lit,
+                ..
+            } => Term::Op {
+                dim,
+                name,
+                args,
+                source,
+                lit,
+                attrs: Some(attrs.into()),
+            },
+            other => other,
+        }
     }
 
     /// Convenience constructor for `>>>` — `>>>[0]` sequential composition.
@@ -560,12 +707,14 @@ impl Term {
                 args,
                 source,
                 lit,
+                attrs,
             } => Term::Op {
                 dim: Box::new(dim.desugar()),
                 name: name.clone(),
                 args: args.iter().map(Term::desugar).collect(),
                 source: source.clone(),
                 lit: lit.clone(),
+                attrs: attrs.clone(),
             },
             Term::Seq { axis, fst, snd } => Term::Seq {
                 axis: Box::new(axis.desugar()),
@@ -666,6 +815,7 @@ impl Term {
                 args,
                 source,
                 lit,
+                attrs,
             } => {
                 let new_args: Vec<Term> = args.iter().map(|a| a.eliminate_handlers()).collect();
                 Term::Op {
@@ -674,6 +824,7 @@ impl Term {
                     args: new_args,
                     source: source.clone(),
                     lit: lit.clone(),
+                    attrs: attrs.clone(),
                 }
             }
             Term::Iter {
@@ -783,6 +934,7 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
             args,
             source,
             lit,
+            attrs,
         } => {
             if args.is_empty() && lit.is_none() {
                 let at_target_dim = dim.dim_label().as_deref() == Some(target);
@@ -803,6 +955,7 @@ fn substitute_capability(scheme: &Term, target: &str, impl_: &Term) -> Term {
                 args: new_args,
                 source: source.clone(),
                 lit: lit.clone(),
+                attrs: attrs.clone(),
             }
         }
         Term::Seq { axis, fst, snd } => Term::Seq {

@@ -587,13 +587,15 @@ fn term_to_value(term: &Term) -> Value {
             args,
             source,
             lit,
+            attrs,
         } => json!({
             "__tag__": "Op",
             "dim": term_to_value(dim),
             "name": name,
             "args": args.iter().map(term_to_value).collect::<Vec<_>>(),
             "source": arr_source_to_value(source),
-            "lit": lit.as_ref().cloned().unwrap_or(Value::Null)
+            "lit": lit.as_ref().cloned().unwrap_or(Value::Null),
+            "attrs": attrs.as_ref().cloned().unwrap_or(Value::Null)
         }),
         Term::Seq { axis, fst, snd } => json!({
             "__tag__": "Seq",
@@ -723,6 +725,10 @@ fn value_to_term(value: &Value) -> Result<Term, String> {
             args: field_term_list(value, "args")?,
             source: value_to_arr_source(value.get("source"))?,
             lit: match value.get("lit") {
+                Some(Value::Null) | None => None,
+                Some(v) => Some(v.clone()),
+            },
+            attrs: match value.get("attrs") {
                 Some(Value::Null) | None => None,
                 Some(v) => Some(v.clone()),
             },
@@ -953,6 +959,7 @@ mod tests {
                     args: vec![c(1)],
                     source: ArrSource::Native,
                     lit: None,
+                    attrs: None,
                 },
             ),
             (

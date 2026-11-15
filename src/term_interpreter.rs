@@ -172,6 +172,7 @@ fn interpret_with_handlers_inner(
             args,
             source,
             lit,
+            ..
         } => eval_op(name, dim, args, source, lit.as_ref(), input, handlers),
 
         other => Err(format!("unsupported Term: {other:?}")),
