@@ -298,7 +298,55 @@ impl TermData {
             "name": name.into(),
             "args": args_arr,
             "source": arr_source_to_value(source),
-            "lit": lit.unwrap_or(Value::Null)
+            "lit": lit.unwrap_or(Value::Null),
+            "attrs": Value::Null
+        }))
+    }
+
+    /// Construct an `Op` carrying declarative attrs (ADR-0173).
+    ///
+    /// `attrs` is emitted as the record's `"attrs"` field (`null` when
+    /// `None`, mirroring `lit`); [`TermData::to_term`] reads it back into
+    /// `Term::Op::attrs`.
+    pub fn op_attrs(
+        name: impl Into<String>,
+        args: Vec<TermData>,
+        source: &ArrSource,
+        lit: Option<Value>,
+        attrs: Option<Value>,
+    ) -> Self {
+        let args_arr: Vec<Value> = args.into_iter().map(|t| t.0).collect();
+        TermData(json!({
+            "__tag__": "Op",
+            "dim": json!({"__tag__": "Const", "value": 1}),
+            "name": name.into(),
+            "args": args_arr,
+            "source": arr_source_to_value(source),
+            "lit": lit.unwrap_or(Value::Null),
+            "attrs": attrs.unwrap_or(Value::Null)
+        }))
+    }
+
+    /// Construct an `Op` at an explicit dimension carrying declarative
+    /// attrs (ADR-0173) — the [`TermData::op_dim`] counterpart of
+    /// [`TermData::op_attrs`].
+    pub fn op_dim_attrs(
+        name: impl Into<String>,
+        dim: TermData,
+        args: Vec<TermData>,
+        source: &ArrSource,
+        lit: Option<Value>,
+        attrs: Option<Value>,
+    ) -> Self {
+        let args_arr: Vec<Value> = args.into_iter().map(|t| t.0).collect();
+        TermData(json!({
+            "__tag__": "Op",
+            "dim": dim.0,
+            "name": name.into(),
+            "args": args_arr,
+            "source": arr_source_to_value(source),
+            "lit": lit.unwrap_or(Value::Null),
+            "attrs": attrs.unwrap_or(Value::Null)
         }))
     }
 
@@ -320,7 +368,8 @@ impl TermData {
             "name": name.into(),
             "args": args_arr,
             "source": arr_source_to_value(source),
-            "lit": lit.unwrap_or(Value::Null)
+            "lit": lit.unwrap_or(Value::Null),
+            "attrs": Value::Null
         }))
     }
 
