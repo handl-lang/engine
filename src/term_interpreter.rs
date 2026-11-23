@@ -159,7 +159,30 @@ fn interpret_with_handlers_inner(
             body,
             target,
             impl_,
+            acc,
         } => {
+            // ADR-0158 `acc` clause: `handle <body> with h acc s0`
+            // seeds a mutable `__acc__` slot on the pushed handler
+            // frame; covered ops then dispatch as
+            // `(payload, s) ~> (result, s')` with `s'` written back, and
+            // the handle yields `(result, s_final)` (or runs `h`'s
+            // 2-ary `return` clause) — see `engine-exec`'s
+            // `native_ops::{handler_with_acc, dispatch_covered_op,
+            // acc_result_split}` and the tree-walk `Handle` arm.
+            // This interpreter's handler map is an immutable
+            // `&HashMap<String, Value>` with no per-frame mutable slot,
+            // so it cannot thread the accumulator — decline so the
+            // caller falls back to AST eval, the same contract as
+            // `handl-kit-arrow-lower`'s `lower_handle` (which refuses to
+            // lower `acc` handles for this very reason). Surface `acc`
+            // syntax is unreachable today, so this only guards
+            // hand-built `Term`s.
+            if acc.is_some() {
+                return Err(
+                    "handle `acc` accumulator is not supported by the term interpreter"
+                        .to_string(),
+                );
+            }
             let handler_val = interpret_with_handlers(impl_, Value::Null, handlers)?;
             let mut handlers = handlers.clone();
             handlers.insert(target.clone(), handler_val);
@@ -1055,4 +1078,40 @@ fn either_right_value(value: &Value) -> Option<Value> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn handle_without_acc_runs_body_under_installed_handler() {
+        // `handle 1 with io = {}` — the impl evaluates to a handler
+        // record installed under `io`; the body ignores it and yields
+        // its constant.
+        let t = Term::handle(
+            Term::Const { value: json!(1) },
+            "io",
+            Term::Const { value: json!({}) },
+        );
+        assert_eq!(interpret(&t, Value::Null), Ok(json!(1)));
+    }
+
+    #[test]
+    fn handle_acc_declines_with_fallback_error() {
+        // ADR-0158 `acc` seeding needs a mutable `__acc__` frame slot
+        // this interpreter does not carry — the `Err` is the
+        // fall-back-to-AST-eval signal, matching `lower_handle`.
+        let t = Term::handle_acc(
+            Term::Const { value: json!(1) },
+            "io",
+            Term::Const { value: json!({}) },
+            Term::Const { value: json!(0) },
+        );
+        match interpret(&t, Value::Null) {
+            Err(e) => assert!(e.contains("acc"), "unexpected error: {e}"),
+            Ok(v) => panic!("acc handle should decline to AST eval, got {v}"),
+        }
+    }
 }
