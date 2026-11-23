@@ -2,9 +2,9 @@
 
 `hnl-engine` — foundation types for pluggable interpretation and rewrite models.
 
-An `engine-*` crate: the shared substrate the language-operation engines build
-on — the kernel-facing types and operation abstractions the rest of the
-family implements against.
+The `engine`/`engine-eqsat` layer: the shared substrate the language-operation
+engines build on — the kernel-facing types and operation abstractions the
+`tool-*`/`exec-*` families implement against.
 
 ## Development
 

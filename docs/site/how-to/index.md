@@ -5,7 +5,7 @@ repos it patches.
 
 ## Add a new engine
 
-Implement `Model` for your engine type and let `interpret` drive it; the `engine-*` crates are the worked examples — no per-kind Rust branching.
+Implement `Model` for your engine type and let `interpret` drive it; the `tool-*`/`exec-*` crates are the worked examples — no per-kind Rust branching.
 
 ```
 struct MyModel;

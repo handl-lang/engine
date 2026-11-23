@@ -4,7 +4,7 @@ Foundation types for every pluggable engine: `Term`, `Model`, and the arena view
 
 ## What it is
 
-The substrate every other `engine-*` crate builds on. It defines the **`Term`**
+The substrate every `tool-*`/`exec-*` crate builds on. It defines the **`Term`**
 algebra used to express eval schemes, the **`Model`** trait an engine implements,
 and a minimal, object-safe **arena view** (`AstRef` / `AstNode` / `LanguageView`)
 that lets a model inspect an AST without depending on `handl-language` — which
