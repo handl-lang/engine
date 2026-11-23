@@ -13,7 +13,7 @@ use crate::{ArrSource, Term};
 
 /// Remaining-stack budget at which [`stacker::maybe_grow`] moves the next
 /// interpreter call onto a fresh segment. Mirrors the
-/// `hnl-engine-typecheck-nbe` constants: deep `Term` graphs (bound-arrow
+/// `hnl-tool-typecheck-nbe` constants: deep `Term` graphs (bound-arrow
 /// `__term__` recursion, `Type.rec` recursors, deep `Seq`/`Op` spines)
 /// recurse natively in [`interpret_with_handlers`], so eval depth is
 /// bounded by total growable stack, not the platform stack.
@@ -166,7 +166,7 @@ fn interpret_with_handlers_inner(
             // frame; covered ops then dispatch as
             // `(payload, s) ~> (result, s')` with `s'` written back, and
             // the handle yields `(result, s_final)` (or runs `h`'s
-            // 2-ary `return` clause) — see `engine-exec`'s
+            // 2-ary `return` clause) — see `exec`'s
             // `native_ops::{handler_with_acc, dispatch_covered_op,
             // acc_result_split}` and the tree-walk `Handle` arm.
             // This interpreter's handler map is an immutable
@@ -460,7 +460,7 @@ fn eval_op(
                 values.push(interpret_with_handlers(arg, input.clone(), handlers)?);
             }
             // Mirror the exec engines' `Num` arithmetic
-            // (`hnl-engine-exec`'s `Num::{Add,Sub,Mul,Div}` and the
+            // (`hnl-exec`'s `Num::{Add,Sub,Mul,Div}` and the
             // `div` op's zero-divisor error): all-integer operands stay
             // in i64 — including *integer division* — while any Float
             // operand promotes the whole fold to f64, and a float result
@@ -698,7 +698,7 @@ fn eval_op(
 
         // `loop_outcome` — the `while` fold's result mapping (the arrow-
         // lowering counterpart of `loop_step_outcome` in
-        // `hnl-engine-exec`): `{state: v}` → `right(v)` (continue),
+        // `hnl-exec`): `{state: v}` → `right(v)` (continue),
         // `{out: v}` → `left(v)` (terminate), anything else → `left(v)`.
         "loop_outcome" => {
             if let Some(obj) = input.as_object() {
