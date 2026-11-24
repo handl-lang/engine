@@ -382,6 +382,7 @@ pub fn apply(f: &Val, arg: Val, ops: &dyn OpHandler) -> Result<Val, EvalError> {
             body_def,
             binds,
             handlers,
+            sig: _,
         }) => {
             let _ = (rest, array_pattern, handlers);
             let binds = binds
@@ -512,6 +513,7 @@ mod tests {
             body_def: Rc::new(TaggedValue::Null),
             binds: Rc::new(Default::default()),
             handlers: Rc::from(Vec::new()),
+            sig: None,
         };
         let t = Term::app(Term::Arr {
             dim: Term::default_dim(),
