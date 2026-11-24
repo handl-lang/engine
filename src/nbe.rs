@@ -17,8 +17,8 @@
 
 use std::rc::Rc;
 
-use handl_value::nbe::{ArrowVal, Val};
 use handl_value::TaggedValue;
+use handl_value::nbe::{ArrowVal, Val};
 use serde_json::Value;
 
 use crate::term::Term;
@@ -165,7 +165,10 @@ pub fn eval(term: &Term, input: Val, ops: &dyn OpHandler) -> Result<Val, EvalErr
             match input {
                 Val::Const(TaggedValue::Pair(p)) => {
                     let v = eval(inner, Val::Const(p.0.clone()), ops)?;
-                    Ok(Val::Const(TaggedValue::Pair(Rc::new((v_as_tagged(v), p.1.clone())))))
+                    Ok(Val::Const(TaggedValue::Pair(Rc::new((
+                        v_as_tagged(v),
+                        p.1.clone(),
+                    )))))
                 }
                 _ => Err(EvalError::BadOperand("first")),
             }
@@ -266,8 +269,7 @@ fn is_cell_tagged(tv: &TaggedValue) -> bool {
         TaggedValue::Arrow { .. } => true,
         TaggedValue::Obj(m) => {
             let tag = m.get("__tag__").and_then(|t| t.as_str());
-            (tag == Some("Arrow")
-                && (m.get("first").is_some() || m.get("inputs").is_some()))
+            (tag == Some("Arrow") && (m.get("first").is_some() || m.get("inputs").is_some()))
                 || tag == Some("Cell")
                 || tag == Some("Cell2")
                 || m.get("__dim__").is_some()
@@ -318,11 +320,7 @@ pub fn compose_cell_vals(
 fn v_as_tagged(v: Val) -> TaggedValue {
     match v {
         Val::Const(t) => t,
-        other => handl_value::nbe::quote(
-            &handl_value::nbe::MetaStore::default(),
-            0,
-            &other,
-        ),
+        other => handl_value::nbe::quote(&handl_value::nbe::MetaStore::default(), 0, &other),
     }
 }
 
@@ -435,9 +433,15 @@ impl OpHandler for NativeOnly {
     ) -> Result<Val, EvalError> {
         match name {
             "id" => Ok(input),
-            "const" => Ok(args.first().cloned().unwrap_or(Val::Const(TaggedValue::Null))),
+            "const" => Ok(args
+                .first()
+                .cloned()
+                .unwrap_or(Val::Const(TaggedValue::Null))),
             "pair" => Ok(Val::Const(TaggedValue::Arr(
-                args.into_iter().map(|v| v_as_tagged(v.clone())).collect::<Vec<_>>().into(),
+                args.into_iter()
+                    .map(|v| v_as_tagged(v.clone()))
+                    .collect::<Vec<_>>()
+                    .into(),
             ))),
             other => Err(EvalError::Op(format!("unknown native op `{other}`"))),
         }
@@ -515,10 +519,13 @@ mod tests {
             handlers: Rc::from(Vec::new()),
             sig: None,
         };
-        let t = Term::app(Term::Arr {
-            dim: Term::default_dim(),
-            value: Value::from(arrow),
-        }, vec![const_t(serde_json::json!(5))]);
+        let t = Term::app(
+            Term::Arr {
+                dim: Term::default_dim(),
+                value: Value::from(arrow),
+            },
+            vec![const_t(serde_json::json!(5))],
+        );
         let v = eval(&t, Val::Const(TaggedValue::Null), &NativeOnly).unwrap();
         match v {
             Val::Arrow(a) => {

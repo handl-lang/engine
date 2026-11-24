@@ -179,8 +179,7 @@ fn interpret_with_handlers_inner(
             // hand-built `Term`s.
             if acc.is_some() {
                 return Err(
-                    "handle `acc` accumulator is not supported by the term interpreter"
-                        .to_string(),
+                    "handle `acc` accumulator is not supported by the term interpreter".to_string(),
                 );
             }
             let handler_val = interpret_with_handlers(impl_, Value::Null, handlers)?;
@@ -386,9 +385,9 @@ fn eval_op(
         "id" => Ok(input),
 
         "elem" => {
-            let idx =
-                lit.and_then(Value::as_u64)
-                    .ok_or_else(|| "elem: missing integer literal")? as usize;
+            let idx = lit
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "elem: missing integer literal")? as usize;
             input
                 .as_array()
                 .and_then(|a| a.get(idx).cloned())
@@ -748,9 +747,7 @@ fn eval_op(
         // lowerer wraps runtime-valued pattern keys in it so
         // `field_access`/`obj_except` always see a string key.
         "obj_key" => {
-            let t = args
-                .first()
-                .ok_or_else(|| "obj_key: missing argument")?;
+            let t = args.first().ok_or_else(|| "obj_key: missing argument")?;
             let v = interpret_with_handlers(t, input, handlers)?;
             Ok(Value::String(v.as_str().unwrap_or("").to_string()))
         }
@@ -765,8 +762,7 @@ fn eval_op(
         "has_field" => {
             if let Some(key) = lit.and_then(Value::as_str) {
                 return Ok(Value::Bool(
-                    tagged_is_obj(&input)
-                        && input.as_object().is_some_and(|o| o.contains_key(key)),
+                    tagged_is_obj(&input) && input.as_object().is_some_and(|o| o.contains_key(key)),
                 ));
             }
             if args.len() < 2 {
@@ -776,8 +772,7 @@ fn eval_op(
             let key = interpret_with_handlers(&args[1], input, handlers)?;
             let key = key.as_str().unwrap_or("");
             Ok(Value::Bool(
-                tagged_is_obj(&target)
-                    && target.as_object().is_some_and(|o| o.contains_key(key)),
+                tagged_is_obj(&target) && target.as_object().is_some_and(|o| o.contains_key(key)),
             ))
         }
 
@@ -808,8 +803,7 @@ fn eval_op(
         // consulted behind the `ctor_name` check, so a non-object
         // input errors like `tag_fields`.
         "ctor_fields" => {
-            let obj = tagged_obj(&input)
-                .ok_or_else(|| "ctor_fields: input is not an object")?;
+            let obj = tagged_obj(&input).ok_or_else(|| "ctor_fields: input is not an object")?;
             let mut fields: Vec<(&String, &Value)> = obj
                 .iter()
                 .filter(|(k, _)| k.as_str() != "__ctor__" && k.as_str() != "type")
@@ -826,8 +820,7 @@ fn eval_op(
         // `payload_fields`. Only consulted by binder paths behind a
         // `has_field "__tag__"` guard, so a non-object input errors.
         "tag_fields" => {
-            let obj = tagged_obj(&input)
-                .ok_or_else(|| "tag_fields: input is not an object")?;
+            let obj = tagged_obj(&input).ok_or_else(|| "tag_fields: input is not an object")?;
             let mut fields: Vec<(&String, &Value)> = obj
                 .iter()
                 .filter(|(k, _)| k.as_str() != "__tag__")
@@ -861,11 +854,13 @@ fn eval_op(
             } else {
                 return Err("obj_except: missing keys literal".into());
             };
-            let obj = tagged_obj(&obj_val)
-                .ok_or_else(|| "obj_except: input is not an object")?;
+            let obj = tagged_obj(&obj_val).ok_or_else(|| "obj_except: input is not an object")?;
             let mut out = Map::new();
             for (k, v) in obj {
-                if !keys.iter().any(|k2| k2.as_str().unwrap_or("") == k.as_str()) {
+                if !keys
+                    .iter()
+                    .any(|k2| k2.as_str().unwrap_or("") == k.as_str())
+                {
                     out.insert(k.clone(), v.clone());
                 }
             }
