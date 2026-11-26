@@ -377,12 +377,13 @@ pub fn apply(f: &Val, arg: Val, ops: &dyn OpHandler) -> Result<Val, EvalError> {
             params,
             rest,
             array_pattern,
+            param_defs,
             body_def,
             binds,
             handlers,
             sig: _,
         }) => {
-            let _ = (rest, array_pattern, handlers);
+            let _ = (rest, array_pattern, param_defs, handlers);
             let binds = binds
                 .iter()
                 .map(|(k, v)| (k.clone(), Val::Const(v.clone())))
@@ -514,6 +515,7 @@ mod tests {
             params: vec!["x".to_string(), "y".to_string()].into(),
             rest: None,
             array_pattern: false,
+            param_defs: None,
             body_def: Rc::new(TaggedValue::Null),
             binds: Rc::new(Default::default()),
             handlers: Rc::from(Vec::new()),
